@@ -6,6 +6,7 @@ namespace Hvatum\OpenIDConnect\Client\Tool;
 
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWK;
+use Jose\Component\Core\Util\Base64UrlSafe;
 use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\JWSBuilder;
 use Jose\Component\Signature\Serializer\CompactSerializer;
@@ -23,7 +24,6 @@ use Jose\Component\Signature\Serializer\CompactSerializer;
  */
 trait DPopTrait
 {
-    use Base64UrlTrait;
     /**
      * DPoP private key path
      */
@@ -162,7 +162,7 @@ trait DPopTrait
     protected function calculateAccessTokenHash(string $accessToken): string
     {
         $hash = hash('sha256', $accessToken, true);
-        return $this->base64UrlEncode($hash);
+        return Base64UrlSafe::encodeUnpadded($hash);
     }
 
     /**

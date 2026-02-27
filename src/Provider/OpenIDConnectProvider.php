@@ -11,6 +11,7 @@ use League\OAuth2\Client\Tool\BearerAuthorizationTrait;
 use Psr\Http\Message\ResponseInterface;
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWKSet;
+use Jose\Component\Core\Util\Base64UrlSafe;
 use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\Algorithm\RS256;
 use Jose\Component\Signature\Algorithm\PS256;
@@ -687,7 +688,7 @@ class OpenIDConnectProvider extends AbstractProvider
             throw new IdentityProviderException('Invalid ID token format', 0, null);
         }
 
-        $header = json_decode($this->base64UrlDecode($parts[0]), true);
+        $header = json_decode(Base64UrlSafe::decode($parts[0]), true);
         if (!is_array($header)) {
             throw new IdentityProviderException('Invalid ID token header', 0, null);
         }
