@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hvatum\OpenIDConnect\Client\Test\Provider;
 
+use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 
@@ -199,6 +200,33 @@ final class OpenIDConnectProviderTest extends TestCase
 
         $token = new \League\OAuth2\Client\Token\AccessToken(['access_token' => 'test']);
         $provider->getResourceOwnerDetailsUrl($token);
+    }
+
+    public function testRejectsUserInfoSubMismatchWithIdToken(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            new Response(200, ['Content-Type' => 'application/json'], '{"sub":"other-user","name":"Alice"}'),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('UserInfo sub claim does not match ID token sub claim');
+
+        $provider->getResourceOwner($token);
     }
 
     public function testCachesPerIssuer(): void
