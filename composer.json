@@ -1,0 +1,56 @@
+{
+    "name": "hvatum/oauth2-openid-connect-client",
+    "description": "Generic OpenID Connect Provider for The PHP League OAuth2 Client with PAR, DPoP, and private_key_jwt support",
+    "license": "MIT",
+    "type": "library",
+    "keywords": [
+        "oauth",
+        "oauth2",
+        "openid connect",
+        "oidc",
+        "par",
+        "dpop",
+        "jwt",
+        "authentication",
+        "authorization",
+        "identity"
+    ],
+    "authors": [
+        {
+            "name": "Stian Hvatum"
+        }
+    ],
+    "require": {
+        "php": "^7.4 || ^8.0",
+        "ext-json": "*",
+        "ext-openssl": "*",
+        "league/oauth2-client": "^2.7",
+        "psr/log": "^3.0",
+        "web-token/jwt-checker": "^2.2",
+        "web-token/jwt-key-mgmt": "^2.2",
+        "web-token/jwt-signature": "^2.2",
+        "web-token/jwt-signature-algorithm-ecdsa": "^2.2",
+        "web-token/jwt-signature-algorithm-rsa": "^2.2"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5 || ^10.0",
+        "mockery/mockery": "^1.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Hvatum\\OpenIDConnect\\Client\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Hvatum\\OpenIDConnect\\Client\\Test\\": "tests/"
+        }
+    },
+    "suggest": {
+        "ext-gmp": "Recommended for RSA key performance (PS256, RS256)",
+        "ext-bcmath": "Alternative to GMP for RSA key performance"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
