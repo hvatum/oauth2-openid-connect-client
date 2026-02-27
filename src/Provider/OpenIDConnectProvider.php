@@ -317,6 +317,9 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     protected function checkResponse(ResponseInterface $response, $data): void
     {
+        // Extract DPoP nonce from any response (before potential throw)
+        $this->extractDPopNonce($response);
+
         if ($response->getStatusCode() >= 400) {
             $this->logger->warning('Token request failed', [
                 'status' => $response->getStatusCode(),
@@ -477,37 +480,22 @@ class OpenIDConnectProvider extends AbstractProvider
     }
 
     /**
-     * Override getResponse to extract DPoP nonce from error responses
+     * Extract DPoP nonce from any response (success or error)
      *
-     * @param \Psr\Http\Message\RequestInterface $request
-     * @return \Psr\Http\Message\ResponseInterface
+     * Called from checkResponse() before throwing, so it works
+     * with any PSR-18 HTTP client.
+     *
+     * @param ResponseInterface $response
      */
-    public function getResponse(\Psr\Http\Message\RequestInterface $request)
+    protected function extractDPopNonce(ResponseInterface $response): void
     {
-        try {
-            $response = $this->getHttpClient()->send($request);
-        } catch (\GuzzleHttp\Exception\BadResponseException $e) {
-            $response = $e->getResponse();
-            if ($response) {
-                $body = (string) $response->getBody();
-                $status = $response->getStatusCode();
-
-                // Extract DPoP-Nonce from error response if present
-                if ($status == 400 && $this->hasDPoP()) {
-                    $nonceHeader = $response->getHeader('DPoP-Nonce');
-                    if (!empty($nonceHeader)) {
-                        $this->setDPopNonce($nonceHeader[0]);
-                        $this->logger->debug('Received DPoP nonce from server error response');
-                    }
-                }
-
-                // Rewind body so parent can read it
-                $response->getBody()->rewind();
+        if ($this->hasDPoP()) {
+            $nonceHeader = $response->getHeader('DPoP-Nonce');
+            if (!empty($nonceHeader)) {
+                $this->setDPopNonce($nonceHeader[0]);
+                $this->logger->debug('Received DPoP nonce from server response');
             }
-            throw $e;
         }
-
-        return $response;
     }
 
     /**
