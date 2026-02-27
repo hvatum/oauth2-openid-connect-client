@@ -47,16 +47,6 @@ trait ClientAssertionTrait
     ];
 
     /**
-     * Map of supported algorithms
-     * @var array<string, string>
-     */
-    protected static array $algFamily = [
-        'ES256' => 'ES256', 'ES384' => 'ES384', 'ES512' => 'ES512',
-        'RS256' => 'RS256', 'RS384' => 'RS384', 'RS512' => 'RS512',
-        'PS256' => 'PS256', 'PS384' => 'PS384', 'PS512' => 'PS512',
-    ];
-
-    /**
      * Map key type to default algorithm
      * @var array<string, string>
      */
@@ -281,48 +271,37 @@ trait ClientAssertionTrait
             throw new \RuntimeException('Invalid JWK: expected a single private key, got a JWK set');
         }
 
-        $data = $key->all();
-
         // Extract kid if not already configured
-        if ($this->clientAssertionKeyId === null && isset($data['kid'])) {
-            $this->clientAssertionKeyId = $data['kid'];
+        if ($this->clientAssertionKeyId === null && $key->has('kid')) {
+            $this->clientAssertionKeyId = $key->get('kid');
         }
 
-        // Detect algorithm - prefer explicit 'alg' field, fallback to key type
-        $kty = isset($data['kty']) ? strtoupper($data['kty']) : null;
-        $alg = isset($data['alg']) ? strtoupper($data['alg']) : null;
+        // Detect algorithm — prefer explicit 'alg' field, fallback to key type
+        $kty = strtoupper($key->get('kty'));
+        $alg = $key->has('alg') ? strtoupper($key->get('alg')) : null;
 
         if ($alg !== null) {
-            // Reject forbidden algorithms
             if (in_array($alg, static::$forbiddenAlgorithms, true)) {
                 throw new \RuntimeException(
-                    "Algorithm '{$data['alg']}' is not allowed for client assertions"
+                    "Algorithm '{$key->get('alg')}' is not allowed for client assertions"
                 );
             }
-
-            // Validate against whitelist and map to supported algorithm
-            if (!isset(static::$algFamily[$alg])) {
+            if (!in_array($alg, static::$allowedAlgorithms, true)) {
                 throw new \RuntimeException(
-                    "Unsupported algorithm in JWK: '{$data['alg']}'. " .
+                    "Unsupported algorithm in JWK: '{$key->get('alg')}'. " .
                     "Allowed: " . implode(', ', static::$allowedAlgorithms)
                 );
             }
-
-            $this->clientAssertionAlgorithm = static::$algFamily[$alg];
-        } elseif ($kty !== null && isset(static::$ktyToAlg[$kty])) {
+            $this->clientAssertionAlgorithm = $alg;
+        } elseif (isset(static::$ktyToAlg[$kty])) {
             $this->clientAssertionAlgorithm = static::$ktyToAlg[$kty];
         } else {
             throw new \RuntimeException(
-                "Unsupported or missing key type (kty) in JWK: " . ($data['kty'] ?? 'null')
+                "Unsupported or missing key type (kty) in JWK: " . $key->get('kty')
             );
         }
 
-        // Normalize kty to uppercase (web-token requires uppercase)
-        if (isset($data['kty'])) {
-            $data['kty'] = strtoupper($data['kty']);
-        }
-
-        return new JWK($data);
+        return $key;
     }
 
     /**
