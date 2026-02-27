@@ -7,8 +7,14 @@ namespace Hvatum\OpenIDConnect\Client\Tool;
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWK;
 use Jose\Component\Signature\Algorithm\ES256;
+use Jose\Component\Signature\Algorithm\ES384;
+use Jose\Component\Signature\Algorithm\ES512;
 use Jose\Component\Signature\Algorithm\PS256;
+use Jose\Component\Signature\Algorithm\PS384;
+use Jose\Component\Signature\Algorithm\PS512;
 use Jose\Component\Signature\Algorithm\RS256;
+use Jose\Component\Signature\Algorithm\RS384;
+use Jose\Component\Signature\Algorithm\RS512;
 use Jose\Component\Signature\JWSBuilder;
 use Jose\Component\Signature\Serializer\CompactSerializer;
 
@@ -16,7 +22,7 @@ use Jose\Component\Signature\Serializer\CompactSerializer;
  * Client Assertion Trait
  *
  * Implements private_key_jwt client authentication (RFC 7523)
- * Supports both EC (ES256) and RSA (RS256, PS256) keys
+ * Supports EC (ES256/384/512) and RSA (RS256/384/512, PS256/384/512) keys
  * Supports both PEM and JWK key formats
  *
  * Uses web-token/jwt-framework for JWT signing
@@ -30,19 +36,23 @@ trait ClientAssertionTrait
     protected static array $forbiddenAlgorithms = ['NONE', 'HS256', 'HS384', 'HS512'];
 
     /**
-     * Allowed algorithms for client assertions
+     * Supported algorithms for client assertions
      * @var array<string>
      */
-    protected static array $allowedAlgorithms = ['ES256', 'ES384', 'ES512', 'RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512'];
+    protected static array $allowedAlgorithms = [
+        'ES256', 'ES384', 'ES512',
+        'RS256', 'RS384', 'RS512',
+        'PS256', 'PS384', 'PS512',
+    ];
 
     /**
-     * Map algorithm to supported family (we support ES256, RS256, PS256)
+     * Map of supported algorithms
      * @var array<string, string>
      */
     protected static array $algFamily = [
-        'ES256' => 'ES256', 'ES384' => 'ES256', 'ES512' => 'ES256',
-        'RS256' => 'RS256', 'RS384' => 'RS256', 'RS512' => 'RS256',
-        'PS256' => 'PS256', 'PS384' => 'PS256', 'PS512' => 'PS256',
+        'ES256' => 'ES256', 'ES384' => 'ES384', 'ES512' => 'ES512',
+        'RS256' => 'RS256', 'RS384' => 'RS384', 'RS512' => 'RS512',
+        'PS256' => 'PS256', 'PS384' => 'PS384', 'PS512' => 'PS512',
     ];
 
     /**
@@ -188,18 +198,18 @@ trait ClientAssertionTrait
      */
     protected function createAlgorithmManager(): AlgorithmManager
     {
-        switch ($this->clientAssertionAlgorithm) {
-            case 'ES256':
-                return new AlgorithmManager([new ES256()]);
-            case 'PS256':
-                return new AlgorithmManager([new PS256()]);
-            case 'RS256':
-                return new AlgorithmManager([new RS256()]);
-            default:
-                throw new \RuntimeException(
-                    "Unsupported algorithm: {$this->clientAssertionAlgorithm}"
-                );
+        $algorithms = [
+            'ES256' => ES256::class, 'ES384' => ES384::class, 'ES512' => ES512::class,
+            'RS256' => RS256::class, 'RS384' => RS384::class, 'RS512' => RS512::class,
+            'PS256' => PS256::class, 'PS384' => PS384::class, 'PS512' => PS512::class,
+        ];
+
+        $alg = $this->clientAssertionAlgorithm;
+        if (!isset($algorithms[$alg])) {
+            throw new \RuntimeException("Unsupported algorithm: {$alg}");
         }
+
+        return new AlgorithmManager([new $algorithms[$alg]()]);
     }
 
     /**
