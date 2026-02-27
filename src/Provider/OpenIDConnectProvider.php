@@ -386,6 +386,16 @@ class OpenIDConnectProvider extends AbstractProvider
         // Filter out transport claims from ID token that shouldn't pollute the resource owner.
         if ($this->idToken !== null) {
             $idTokenClaims = $this->validateIdToken($this->idToken);
+
+            // OIDC Core §5.3.2: sub in UserInfo MUST exactly match ID token sub.
+            if (isset($response['sub']) && $response['sub'] !== $idTokenClaims['sub']) {
+                throw new IdentityProviderException(
+                    'UserInfo sub claim does not match ID token sub claim',
+                    0,
+                    null
+                );
+            }
+
             $transportClaims = ['at_hash', 'c_hash', 'nonce', 'auth_time', 'azp', 'acr', 'amr'];
             $identityClaims = array_diff_key($idTokenClaims, array_flip($transportClaims));
             $response = array_merge($identityClaims, $response);
