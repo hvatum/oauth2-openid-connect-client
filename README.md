@@ -12,7 +12,7 @@ A generic OpenID Connect provider for [The PHP League's OAuth2 Client](https://g
 
 ## Requirements
 
-- PHP 7.4 or later
+- PHP 8.2 or later
 - `ext-json`
 - `ext-openssl`
 
