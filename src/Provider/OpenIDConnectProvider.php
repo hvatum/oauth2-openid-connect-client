@@ -108,6 +108,19 @@ class OpenIDConnectProvider extends AbstractProvider
     protected ?string $callbackIssuer = null;
 
     /**
+     * Whether the AS advertises RFC 9207 issuer response parameter support
+     * (authorization_response_iss_parameter_supported in discovery)
+     */
+    protected bool $issuerResponseParameterSupported = false;
+
+    /**
+     * Whether to enforce RFC 9207 issuer identification validation.
+     * When true (default), if the AS advertises support, callbacks missing
+     * the iss parameter will be rejected.
+     */
+    protected bool $enforceIssuerIdentification = true;
+
+    /**
      * ID token from last token response
      */
     protected ?string $idToken = null;
@@ -172,6 +185,11 @@ class OpenIDConnectProvider extends AbstractProvider
             'issuer' => $this->issuerUrl,
             'par_enabled' => $this->parUrl !== null,
         ]);
+
+        // Optional: Disable strict RFC 9207 enforcement
+        if (isset($options['enforceIssuerIdentification'])) {
+            $this->enforceIssuerIdentification = (bool) $options['enforceIssuerIdentification'];
+        }
 
         // Optional: Initialize client assertion (private_key_jwt)
         if (!empty($options['privateKeyPath'])) {
@@ -625,7 +643,23 @@ class OpenIDConnectProvider extends AbstractProvider
             'has_callback_issuer' => $callbackIssuer !== null,
         ]);
 
-        // Validate callback issuer parameter (RFC 9207 - Authorization Server Issuer Identification)
+        // RFC 9207 - Authorization Server Issuer Identification
+        // When the AS advertises support, reject callbacks that are missing the iss parameter
+        if ($callbackIssuer === null
+            && $this->issuerResponseParameterSupported
+            && $this->enforceIssuerIdentification
+        ) {
+            $this->logger->warning('RFC 9207: AS supports issuer identification but callback is missing iss parameter');
+            throw new IdentityProviderException(
+                'Authorization response is missing the iss parameter. '
+                . 'The authorization server advertises authorization_response_iss_parameter_supported. '
+                . 'This may indicate a mix-up attack (RFC 9207).',
+                0,
+                null
+            );
+        }
+
+        // Validate callback issuer parameter against expected issuer
         // This protects against mix-up attacks when using multiple identity providers
         if ($callbackIssuer !== null && $callbackIssuer !== $this->issuerUrl) {
             $this->logger->warning('Potential mix-up attack: issuer mismatch in callback', [

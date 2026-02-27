@@ -131,6 +131,7 @@ trait WellKnownConfigTrait
         $this->jwksUrl = $config['jwks_uri'] ?? null;
         $this->parUrl = $config['pushed_authorization_request_endpoint'] ?? null;
         $this->revocationUrl = $config['revocation_endpoint'] ?? null;
+        $this->issuerResponseParameterSupported = !empty($config['authorization_response_iss_parameter_supported']);
     }
 
     /**
