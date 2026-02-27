@@ -9,7 +9,7 @@ use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 
 final class ClientAssertionTraitTest extends TestCase
 {
-    public function testClientAssertionAudienceUsesIssuerUrl(): void
+    public function testClientAssertionAudienceUsesTokenEndpointUrl(): void
     {
         [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
 
@@ -41,8 +41,8 @@ final class ClientAssertionTraitTest extends TestCase
         $payloadB64 = explode('.', $assertion)[1];
         $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
 
-        // Audience should be the issuer URL
-        self::assertSame('https://idp.test', $payload['aud']);
+        // Audience should be the token endpoint URL (RFC 7523 Section 3)
+        self::assertSame('https://idp.test/oauth2/token', $payload['aud']);
         self::assertSame('client-123', $payload['iss']);
         self::assertSame('client-123', $payload['sub']);
     }

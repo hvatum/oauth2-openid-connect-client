@@ -285,7 +285,7 @@ class OpenIDConnectProvider extends AbstractProvider
     {
         // Add client assertion (private_key_jwt) if configured
         if ($this->hasClientAssertion()) {
-            $assertion = $this->createClientAssertion($this->issuerUrl);
+            $assertion = $this->createClientAssertion($this->tokenUrl);
             $params['client_assertion_type'] = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
             $params['client_assertion'] = $assertion;
             unset($params['client_secret']);
@@ -780,7 +780,7 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         $this->logger->debug('ID token validated successfully', [
-            'has_sub' => isset($decoded['sub']),
+            'sub' => $decoded['sub'],
             'iss' => $decoded['iss'] ?? 'unknown',
         ]);
 
