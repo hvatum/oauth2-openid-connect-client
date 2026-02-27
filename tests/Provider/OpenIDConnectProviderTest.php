@@ -232,6 +232,32 @@ final class OpenIDConnectProviderTest extends TestCase
         ], $history);
     }
 
+    public function testDiscoveryRejectsNonHttpsTokenEndpoint(): void
+    {
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('token_endpoint must use https URL');
+
+        $history = [];
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint' => 'http://idp.test/oauth2/token',
+            ]),
+        ], $history);
+    }
+
+    public function testDiscoveryRejectsNonHttpsJwksUri(): void
+    {
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('jwks_uri must use https URL');
+
+        $history = [];
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'jwks_uri' => 'http://idp.test/oauth2/jwks',
+            ]),
+        ], $history);
+    }
+
     public function testWellKnownUrlOverride(): void
     {
         $history = [];

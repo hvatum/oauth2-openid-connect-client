@@ -130,6 +130,22 @@ trait WellKnownConfigTrait
             }
         }
 
+        // Endpoint URLs in discovery metadata must use HTTPS.
+        $endpointFields = [
+            'authorization_endpoint',
+            'token_endpoint',
+            'userinfo_endpoint',
+            'jwks_uri',
+            'pushed_authorization_request_endpoint',
+            'revocation_endpoint',
+        ];
+
+        foreach ($endpointFields as $field) {
+            if (isset($config[$field]) && $config[$field] !== null) {
+                $this->assertHttpsUrl($field, $config[$field]);
+            }
+        }
+
         // OIDC Discovery §4.3: issuer in response must match expected issuer
         if ($config['issuer'] !== $expectedIssuer) {
             throw new IdentityProviderException(
@@ -138,6 +154,33 @@ trait WellKnownConfigTrait
                     $expectedIssuer,
                     $config['issuer']
                 ),
+                0,
+                null
+            );
+        }
+    }
+
+    /**
+     * Validate metadata URL is an HTTPS URL.
+     *
+     * @param string $field
+     * @param mixed $value
+     * @throws IdentityProviderException
+     */
+    protected function assertHttpsUrl(string $field, $value): void
+    {
+        if (!is_string($value)) {
+            throw new IdentityProviderException(
+                sprintf('Invalid well-known configuration: %s must be a string URL', $field),
+                0,
+                null
+            );
+        }
+
+        $scheme = parse_url($value, PHP_URL_SCHEME);
+        if ($scheme === null || strtolower($scheme) !== 'https') {
+            throw new IdentityProviderException(
+                sprintf('Invalid well-known configuration: %s must use https URL', $field),
                 0,
                 null
             );
