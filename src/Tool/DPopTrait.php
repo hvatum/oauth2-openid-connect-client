@@ -19,8 +19,8 @@ use Jose\Component\Signature\Serializer\CompactSerializer;
  *
  * Uses web-token/jwt-framework for JWT signing
  *
- * Note: DPoP requires EC P-256 keys only (ES256 algorithm) per RFC 9449.
- * This is more restrictive than ClientAssertionTrait which supports EC and RSA.
+ * This library uses ES256 for DPoP (mandatory-to-implement per RFC 9449).
+ * Other asymmetric algorithms are permitted by the spec but not supported here.
  */
 trait DPopTrait
 {
