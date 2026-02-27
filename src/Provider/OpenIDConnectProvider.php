@@ -731,12 +731,19 @@ class OpenIDConnectProvider extends AbstractProvider
             }
 
             // Validate registered claims using claim checkers with clock skew
+            // PSR-20 clock required by web-token v4 time-based checkers
+            $clock = new class implements \Psr\Clock\ClockInterface {
+                public function now(): \DateTimeImmutable
+                {
+                    return new \DateTimeImmutable();
+                }
+            };
             $claimCheckerManager = new ClaimCheckerManager([
                 new IssuerChecker([$this->issuerUrl]),
                 new AudienceChecker($this->clientId),
-                new ExpirationTimeChecker(static::CLOCK_SKEW_LEEWAY),
-                new NotBeforeChecker(static::CLOCK_SKEW_LEEWAY),
-                new IssuedAtChecker(static::CLOCK_SKEW_LEEWAY),
+                new ExpirationTimeChecker($clock, static::CLOCK_SKEW_LEEWAY),
+                new NotBeforeChecker($clock, static::CLOCK_SKEW_LEEWAY),
+                new IssuedAtChecker($clock, static::CLOCK_SKEW_LEEWAY),
                 new NonceChecker($nonce),
             ]);
 

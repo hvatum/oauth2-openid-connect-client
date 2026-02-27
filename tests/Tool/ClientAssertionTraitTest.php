@@ -158,6 +158,42 @@ final class ClientAssertionTraitTest extends TestCase
         self::assertSame('PS256', $header['alg']);
     }
 
+    public function testEcPkcs8PemKeyDetectedAsEs256(): void
+    {
+        // Generate EC key — openssl_pkey_export produces PKCS#8 format
+        // ("-----BEGIN PRIVATE KEY-----") by default for EC keys
+        $resource = openssl_pkey_new([
+            'private_key_type' => OPENSSL_KEYTYPE_EC,
+            'curve_name' => 'prime256v1',
+        ]);
+
+        openssl_pkey_export($resource, $privateKeyPem);
+
+        // Verify this is indeed a PKCS#8 PEM (generic header, not "EC PRIVATE KEY")
+        self::assertStringContainsString('-----BEGIN PRIVATE KEY-----', $privateKeyPem);
+        self::assertStringNotContainsString('EC PRIVATE KEY', $privateKeyPem);
+
+        $pemPath = TestHelper::createTempKeyFile($privateKeyPem);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKeyPath' => $pemPath,
+            'keyId' => 'ec-pkcs8-test',
+        ]);
+
+        $request = $provider->debugAccessTokenRequestFromGrant('client_credentials');
+        parse_str((string)$request->getBody(), $params);
+
+        $assertion = $params['client_assertion'] ?? '';
+        $headerB64 = explode('.', $assertion)[0];
+        $header = json_decode(base64_decode(strtr($headerB64, '-_', '+/')), true);
+
+        // Must use ES256, not RS256 — this was the bug
+        self::assertSame('ES256', $header['alg']);
+    }
+
     private function generateRsaPrivateJwk(string $kid): array
     {
         $resource = openssl_pkey_new([
