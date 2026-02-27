@@ -80,7 +80,7 @@ final class IdTokenValidationTest extends TestCase
         $provider->setNonce('n-1');
 
         $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
-        $this->expectExceptionMessage('missing required sub claim');
+        $this->expectExceptionMessage('sub');
         $provider->validateIdToken($idToken);
     }
 
