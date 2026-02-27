@@ -322,16 +322,21 @@ trait ClientAssertionTrait
      */
     protected function loadJwkFromPem(string $pemContent): JWK
     {
-        // Detect key type from PEM header and use ktyToAlg mapping
-        if (strpos($pemContent, 'EC PRIVATE KEY') !== false) {
-            $this->clientAssertionAlgorithm = static::$ktyToAlg['EC'] ?? 'ES256';
-        } elseif (strpos($pemContent, 'RSA PRIVATE KEY') !== false || strpos($pemContent, 'PRIVATE KEY') !== false) {
-            $this->clientAssertionAlgorithm = static::$ktyToAlg['RSA'] ?? 'RS256';
-        }
-
         // Use web-token's JWKFactory to convert PEM to JWK
         // Note: This requires the key-mgmt component
         $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKey($pemContent);
+
+        // Detect algorithm from the actual key type (kty) in the resulting JWK,
+        // not the PEM header. This correctly handles PKCS#8 keys (generic
+        // "-----BEGIN PRIVATE KEY-----") which can be either RSA or EC.
+        $kty = strtoupper($jwk->get('kty'));
+        if (isset(static::$ktyToAlg[$kty])) {
+            $this->clientAssertionAlgorithm = static::$ktyToAlg[$kty];
+        } else {
+            throw new \RuntimeException(
+                "Unsupported key type in PEM: '{$kty}'. Supported: " . implode(', ', array_keys(static::$ktyToAlg))
+            );
+        }
 
         return $jwk;
     }
