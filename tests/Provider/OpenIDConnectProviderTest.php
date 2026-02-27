@@ -165,6 +165,34 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertArrayNotHasKey('client_secret', $parParams);
     }
 
+    public function testDiscoveryAcceptsProviderWithoutUserinfoEndpoint(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'userinfo_endpoint' => null,
+            ]),
+        ], $history);
+
+        // Provider should initialize without error
+        self::assertSame('https://idp.test/oauth2/authorize', $provider->getBaseAuthorizationUrl());
+    }
+
+    public function testGetResourceOwnerDetailsUrlThrowsWhenUserinfoMissing(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'userinfo_endpoint' => null,
+            ]),
+        ], $history);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('UserInfo endpoint not available');
+
+        $token = new \League\OAuth2\Client\Token\AccessToken(['access_token' => 'test']);
+        $provider->getResourceOwnerDetailsUrl($token);
+    }
 
     public function testCachesPerWellKnownUrl(): void
     {
