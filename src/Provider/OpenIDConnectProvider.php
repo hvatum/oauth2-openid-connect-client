@@ -772,6 +772,11 @@ class OpenIDConnectProvider extends AbstractProvider
             );
         }
 
+        // Verify sub claim is present (OIDC Core Section 2)
+        if (!isset($decoded['sub']) || !is_string($decoded['sub'])) {
+            throw new IdentityProviderException('ID token missing required sub claim', 0, null);
+        }
+
         // Verify azp when multiple audiences are present
         $audience = $decoded['aud'] ?? [];
         $audList = is_array($audience) ? $audience : [$audience];
