@@ -164,11 +164,12 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertNotEmpty($parParams['client_assertion']);
         self::assertArrayNotHasKey('client_secret', $parParams);
 
-        // Audience should be the PAR endpoint URL (RFC 7523 §3)
+        // Audience should be the token endpoint URL per RFC 7523 §3
+        // (RFC 9126 §2: PAR uses same client auth as token endpoint)
         $assertion = $parParams['client_assertion'];
         $payloadB64 = explode('.', $assertion)[1];
         $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
-        self::assertSame('https://idp.test/oauth2/par', $payload['aud']);
+        self::assertSame('https://idp.test/oauth2/token', $payload['aud']);
     }
 
     public function testDiscoveryAcceptsProviderWithoutUserinfoEndpoint(): void
