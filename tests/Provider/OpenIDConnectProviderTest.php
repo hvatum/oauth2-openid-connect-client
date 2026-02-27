@@ -163,6 +163,12 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertSame('urn:ietf:params:oauth:client-assertion-type:jwt-bearer', $parParams['client_assertion_type']);
         self::assertNotEmpty($parParams['client_assertion']);
         self::assertArrayNotHasKey('client_secret', $parParams);
+
+        // Audience should be the PAR endpoint URL (RFC 7523 §3)
+        $assertion = $parParams['client_assertion'];
+        $payloadB64 = explode('.', $assertion)[1];
+        $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
+        self::assertSame('https://idp.test/oauth2/par', $payload['aud']);
     }
 
     public function testDiscoveryAcceptsProviderWithoutUserinfoEndpoint(): void
