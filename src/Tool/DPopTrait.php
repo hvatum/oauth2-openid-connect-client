@@ -183,42 +183,13 @@ trait DPopTrait
             );
         }
 
-        $content = file_get_contents($this->dpopPrivateKeyPath);
-        if ($content === false) {
-            throw new \RuntimeException(
-                "Failed to read DPoP private key file: {$this->dpopPrivateKeyPath}"
-            );
-        }
+        $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKeyFile($this->dpopPrivateKeyPath);
 
-        // Verify PEM format
-        if (strpos(trim($content), '-----BEGIN') !== 0) {
-            throw new \RuntimeException(
-                'DPoP private key must be in PEM format (starting with -----BEGIN EC PRIVATE KEY-----)'
-            );
-        }
-
-        // Convert PEM to JWK using OpenSSL
-        $resource = openssl_pkey_get_private($content);
-        if ($resource === false) {
-            throw new \RuntimeException(
-                'Failed to parse DPoP private key: ' . openssl_error_string()
-            );
-        }
-
-        $details = openssl_pkey_get_details($resource);
-        if ($details === false || $details['type'] !== OPENSSL_KEYTYPE_EC) {
+        if ($jwk->get('kty') !== 'EC') {
             throw new \RuntimeException('DPoP private key must be EC type');
         }
 
-        $jwkData = [
-            'kty' => 'EC',
-            'crv' => 'P-256',
-            'x' => $this->base64UrlEncode($details['ec']['x']),
-            'y' => $this->base64UrlEncode($details['ec']['y']),
-            'd' => $this->base64UrlEncode($details['ec']['d']),
-        ];
-
-        $this->dpopPrivateJwk = new JWK($jwkData);
+        $this->dpopPrivateJwk = $jwk;
         return $this->dpopPrivateJwk;
     }
 
@@ -240,41 +211,22 @@ trait DPopTrait
             );
         }
 
-        $content = file_get_contents($this->dpopPublicKeyPath);
-        if ($content === false) {
-            throw new \RuntimeException(
-                "Failed to read DPoP public key file: {$this->dpopPublicKeyPath}"
-            );
-        }
+        $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKeyFile($this->dpopPublicKeyPath);
 
-        // Parse PEM public key using OpenSSL
-        $publicKey = openssl_pkey_get_public($content);
-        if ($publicKey === false) {
-            throw new \RuntimeException(
-                "Failed to parse DPoP public key: " . openssl_error_string()
-            );
-        }
-
-        $details = openssl_pkey_get_details($publicKey);
-        if ($details === false || $details['type'] !== OPENSSL_KEYTYPE_EC) {
+        if ($jwk->get('kty') !== 'EC') {
             throw new \RuntimeException('DPoP public key must be EC type');
         }
 
-        // Verify P-256 curve
-        $curveName = $details['ec']['curve_name'] ?? null;
-        if ($curveName !== 'prime256v1') {
+        if ($jwk->get('crv') !== 'P-256') {
             throw new \RuntimeException(
-                "DPoP public key must use P-256 (prime256v1) curve, got: " . ($curveName ?? 'unknown')
+                "DPoP public key must use P-256 curve, got: " . $jwk->get('crv')
             );
         }
 
-        // Convert to JWK format (RFC 7517) - public key only for embedding
-        $this->dpopPublicKeyJwk = [
-            'kty' => 'EC',
-            'crv' => 'P-256',
-            'x' => $this->base64UrlEncode($details['ec']['x']),
-            'y' => $this->base64UrlEncode($details['ec']['y']),
-        ];
+        // Public key only (no 'd' parameter) for embedding in JWT header
+        $values = $jwk->all();
+        unset($values['d']);
+        $this->dpopPublicKeyJwk = $values;
 
         return $this->dpopPublicKeyJwk;
     }
@@ -286,18 +238,10 @@ trait DPopTrait
      */
     public function getDPopJwkThumbprint(): string
     {
-        $jwk = $this->getDPopPublicKeyJwk();
+        $jwkData = $this->getDPopPublicKeyJwk();
+        $jwk = new JWK($jwkData);
 
-        // RFC 7638: Canonical JSON for thumbprint (alphabetically sorted keys)
-        $canonicalJwk = json_encode([
-            'crv' => $jwk['crv'],
-            'kty' => $jwk['kty'],
-            'x' => $jwk['x'],
-            'y' => $jwk['y'],
-        ], JSON_UNESCAPED_SLASHES);
-
-        $hash = hash('sha256', $canonicalJwk, true);
-        return $this->base64UrlEncode($hash);
+        return $jwk->thumbprint('sha256');
     }
 
     /**

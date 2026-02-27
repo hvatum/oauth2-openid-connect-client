@@ -322,13 +322,11 @@ trait ClientAssertionTrait
      */
     protected function loadJwkFromPem(string $pemContent): JWK
     {
-        // Use web-token's JWKFactory to convert PEM to JWK
-        // Note: This requires the key-mgmt component
+        // web-token v4 handles both traditional (SEC1/PKCS#1) and PKCS#8 PEM
+        // formats for both EC and RSA keys.
         $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKey($pemContent);
 
-        // Detect algorithm from the actual key type (kty) in the resulting JWK,
-        // not the PEM header. This correctly handles PKCS#8 keys (generic
-        // "-----BEGIN PRIVATE KEY-----") which can be either RSA or EC.
+        // Detect algorithm from actual key type in the JWK
         $kty = strtoupper($jwk->get('kty'));
         if (isset(static::$ktyToAlg[$kty])) {
             $this->clientAssertionAlgorithm = static::$ktyToAlg[$kty];
