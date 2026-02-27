@@ -771,8 +771,7 @@ class OpenIDConnectProvider extends AbstractProvider
             throw new IdentityProviderException(
                 'ID token claim validation failed: ' . $e->getMessage(),
                 0,
-                null,
-                $e
+                null
             );
         } catch (\Throwable $e) {
             $this->logger->warning('ID token validation failed', [
@@ -781,8 +780,7 @@ class OpenIDConnectProvider extends AbstractProvider
             throw new IdentityProviderException(
                 'Failed to validate ID token: ' . $e->getMessage(),
                 0,
-                null,
-                $e
+                null
             );
         }
 
@@ -852,7 +850,11 @@ class OpenIDConnectProvider extends AbstractProvider
         } catch (IdentityProviderException $e) {
             throw $e;
         } catch (\Throwable $e) {
-            throw new IdentityProviderException('Failed to fetch JWKS', 0, null, $e);
+            throw new IdentityProviderException(
+                'Failed to fetch JWKS: ' . $e->getMessage(),
+                0,
+                null
+            );
         }
     }
 

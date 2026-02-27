@@ -105,8 +105,7 @@ trait WellKnownConfigTrait
             throw new IdentityProviderException(
                 "Failed to fetch well-known configuration: " . $e->getMessage(),
                 0,
-                null,
-                $e
+                null
             );
         }
     }
