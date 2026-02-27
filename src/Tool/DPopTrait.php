@@ -284,12 +284,8 @@ trait DPopTrait
 
         // RFC 9449 §8.2: nonce errors may use 400 or 401, indicated by DPoP-Nonce header
         $status = $response->getStatusCode();
-        if ($status === 400 || $status === 401) {
-            $nonceHeader = $response->getHeader('DPoP-Nonce');
-            if (!empty($nonceHeader)) {
-                // Nonce was already stored by sendDPopRequest(); retry with it
-                $response = $this->sendDPopRequest($method, $url, $accessToken, $options);
-            }
+        if (($status === 400 || $status === 401) && $this->dpopNonce !== null) {
+            $response = $this->sendDPopRequest($method, $url, $accessToken, $options);
         }
 
         return $response;
@@ -333,8 +329,22 @@ trait DPopTrait
             }
         }
 
-        // Send request
-        $response = $this->getHttpClient()->send($request);
+        // Send request — catch HTTP client exceptions (e.g., Guzzle throws on 4xx)
+        // to extract DPoP-Nonce from error responses for nonce retry logic
+        try {
+            $response = $this->getHttpClient()->send($request);
+        } catch (\Throwable $e) {
+            // Extract response from Guzzle-style exceptions
+            if (method_exists($e, 'getResponse') && ($response = $e->getResponse()) !== null) {
+                // Extract nonce before returning error response
+                $nonceHeader = $response->getHeader('DPoP-Nonce');
+                if (!empty($nonceHeader)) {
+                    $this->setDPopNonce($nonceHeader[0]);
+                }
+                return $response;
+            }
+            throw $e;
+        }
 
         // Store nonce from response for future requests
         $nonceHeader = $response->getHeader('DPoP-Nonce');
