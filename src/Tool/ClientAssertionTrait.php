@@ -301,6 +301,13 @@ trait ClientAssertionTrait
             );
         }
 
+        // Normalize kty to uppercase (web-token requires uppercase for signing)
+        $data = $key->all();
+        if (isset($data['kty']) && $data['kty'] !== strtoupper($data['kty'])) {
+            $data['kty'] = strtoupper($data['kty']);
+            return new JWK($data);
+        }
+
         return $key;
     }
 
