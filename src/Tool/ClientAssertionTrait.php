@@ -6,6 +6,7 @@ namespace Hvatum\OpenIDConnect\Client\Tool;
 
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWK;
+use Jose\Component\Core\JWKSet;
 use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\Algorithm\ES384;
 use Jose\Component\Signature\Algorithm\ES512;
@@ -266,10 +267,21 @@ trait ClientAssertionTrait
      */
     protected function loadJwkFromJson(string $jsonContent): JWK
     {
-        $data = json_decode($jsonContent, true);
-        if (!is_array($data)) {
+        $decoded = json_decode($jsonContent, true);
+        if (!is_array($decoded)) {
             throw new \RuntimeException('Invalid JWK: not valid JSON');
         }
+
+        if (!isset($decoded['kty'])) {
+            throw new \RuntimeException('Unsupported or missing key type (kty) in JWK: null');
+        }
+
+        $key = \Jose\Component\KeyManagement\JWKFactory::createFromJsonObject($jsonContent);
+        if ($key instanceof JWKSet) {
+            throw new \RuntimeException('Invalid JWK: expected a single private key, got a JWK set');
+        }
+
+        $data = $key->all();
 
         // Extract kid if not already configured
         if ($this->clientAssertionKeyId === null && isset($data['kid'])) {
