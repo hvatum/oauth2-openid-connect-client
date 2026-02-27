@@ -115,16 +115,21 @@ trait PARTrait
      */
     protected function getStreamFactory()
     {
-        // Use the request factory to create a stream
-        // League's AbstractProvider should have this available
+        // Check if the request factory also implements StreamFactoryInterface
         if (method_exists($this, 'getRequestFactory')) {
             $requestFactory = $this->getRequestFactory();
-            if (method_exists($requestFactory, 'createStream')) {
+            if ($requestFactory instanceof \Psr\Http\Message\StreamFactoryInterface) {
                 return $requestFactory;
             }
         }
 
-        // Fallback: create stream from GuzzleHttp
-        return new \GuzzleHttp\Psr7\HttpFactory();
+        // Guzzle is a transitive dependency via league/oauth2-client
+        if (class_exists(\GuzzleHttp\Psr7\HttpFactory::class)) {
+            return new \GuzzleHttp\Psr7\HttpFactory();
+        }
+
+        throw new \RuntimeException(
+            'No PSR-17 StreamFactory available. Ensure a PSR-17 compatible HTTP factory is configured.'
+        );
     }
 }
