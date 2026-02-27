@@ -772,7 +772,12 @@ class OpenIDConnectProvider extends AbstractProvider
              * in order to keep other claims as well
              */
 
-            $claimCheckerManager->check($decoded, ['iss', 'sub', 'aud', 'exp', 'iat']);
+            // Mandatory claims per OIDC Core; add nonce when one was sent (§3.1.3.7)
+            $mandatoryClaims = ['iss', 'sub', 'aud', 'exp', 'iat'];
+            if ($nonce !== null) {
+                $mandatoryClaims[] = 'nonce';
+            }
+            $claimCheckerManager->check($decoded, $mandatoryClaims);
         } catch (InvalidClaimException $e) {
             $this->logger->warning('ID token claim validation failed', [
                 'reason' => $e->getMessage(),

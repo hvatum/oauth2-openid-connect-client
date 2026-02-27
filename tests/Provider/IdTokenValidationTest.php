@@ -169,6 +169,57 @@ final class IdTokenValidationTest extends TestCase
         self::assertSame('user-1', $result['sub']);
     }
 
+    public function testRejectsIdTokenMissingNonceWhenNonceWasSent(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        // Token WITHOUT nonce — but nonce was sent in auth request
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            // deliberately omitting 'nonce'
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('expected-nonce');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('nonce');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testAcceptsIdTokenWithoutNonceWhenNoneWasSent(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        // Token without nonce — no nonce was sent in auth request either
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        // Do NOT set nonce — validates without nonce requirement
+        $result = $provider->validateIdToken($idToken);
+        self::assertSame('user-1', $result['sub']);
+    }
+
     public function testRejectsMissingMandatoryClaims(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();
