@@ -98,11 +98,23 @@ trait DPopTrait
         // Use stored nonce if not provided
         $nonce = $nonce ?? $this->dpopNonce;
 
+        // Strip query and fragment from target URI per RFC 9449 Section 4.2
+        $parsed = parse_url($targetUri);
+        $host = $parsed['host'] ?? '';
+        // Preserve IPv6 bracket notation for hosts that contain ':'
+        // but aren't already bracketed (parse_url behavior varies by PHP version)
+        if ($host !== '' && strpos($host, ':') !== false && $host[0] !== '[') {
+            $host = '[' . $host . ']';
+        }
+        $htu = ($parsed['scheme'] ?? '') . '://' . $host
+            . (isset($parsed['port']) ? ':' . $parsed['port'] : '')
+            . ($parsed['path'] ?? '/');
+
         // Build DPoP proof payload (RFC 9449)
         $payloadData = [
             'jti' => bin2hex(random_bytes(16)),
             'htm' => strtoupper($httpMethod),
-            'htu' => $targetUri,
+            'htu' => $htu,
             'iat' => $now,
         ];
 

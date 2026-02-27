@@ -41,6 +41,59 @@ final class DPopTraitTest extends TestCase
         self::assertSame('https://idp.test/oauth2/token', $payload['htu']);
     }
 
+    public function testDpopHtuStripsQueryAndFragment(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(200, [], '{"data":"ok"}'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->makeDPopRequest('GET', 'https://api.example.com/resource?page=1&limit=10#section', 'token-123');
+
+        // Extract DPoP proof from the request
+        $apiRequest = $history[1]['request'];
+        $dpopHeader = $apiRequest->getHeaderLine('DPoP');
+        $payloadB64 = explode('.', $dpopHeader)[1];
+        $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
+
+        // htu must not contain query or fragment per RFC 9449 Section 4.2
+        self::assertSame('https://api.example.com/resource', $payload['htu']);
+    }
+
+    public function testDpopHtuPreservesIpv6Brackets(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(200, [], '{"data":"ok"}'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->makeDPopRequest('GET', 'https://[2001:db8::1]/resource?q=1', 'token-123');
+
+        $apiRequest = $history[1]['request'];
+        $dpopHeader = $apiRequest->getHeaderLine('DPoP');
+        $payloadB64 = explode('.', $dpopHeader)[1];
+        $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
+
+        // IPv6 brackets must be preserved in htu
+        self::assertSame('https://[2001:db8::1]/resource', $payload['htu']);
+    }
+
     public function testDpopNonceIsPersistedFromApiResponse(): void
     {
         [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
