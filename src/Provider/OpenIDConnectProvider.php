@@ -542,19 +542,29 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     protected function isDPopNonceError(IdentityProviderException $e): bool
     {
-        // Check for RFC 9449 compliant error code from response body
+        // checkResponse() sets the exception message from the parsed error field,
+        // so use_dpop_nonce will appear in the message if the server sent it.
+        if (strpos(strtolower($e->getMessage()), 'use_dpop_nonce') !== false) {
+            return true;
+        }
+
+        // Fallback: check the response body directly (safe stream read)
         $response = $e->getResponseBody();
         if ($response instanceof ResponseInterface) {
-            $body = (string) $response->getBody();
-            $response->getBody()->rewind();
-            $data = json_decode($body, true);
-            if (is_array($data) && ($data['error'] ?? null) === 'use_dpop_nonce') {
-                return true;
+            $stream = $response->getBody();
+            try {
+                $stream->rewind();
+                $body = (string) $stream;
+                $data = json_decode($body, true);
+                if (is_array($data) && ($data['error'] ?? null) === 'use_dpop_nonce') {
+                    return true;
+                }
+            } catch (\Throwable $ignored) {
+                // Stream may not be seekable; message check above is sufficient
             }
         }
 
-        // Fallback: check exception message for exact RFC 9449 error code only
-        return strpos(strtolower($e->getMessage()), 'use_dpop_nonce') !== false;
+        return false;
     }
 
     /**

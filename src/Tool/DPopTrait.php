@@ -285,11 +285,16 @@ trait DPopTrait
         string $accessToken,
         array $options = []
     ): \Psr\Http\Message\ResponseInterface {
+        $previousNonce = $this->dpopNonce;
         $response = $this->sendDPopRequest($method, $url, $accessToken, $options);
 
-        // RFC 9449 §8.2: nonce errors may use 400 or 401, indicated by DPoP-Nonce header
+        // RFC 9449 §8.2: retry only when the server signals a nonce requirement
+        // by returning a DPoP-Nonce header with a 400/401 status and the nonce changed
         $status = $response->getStatusCode();
-        if (($status === 400 || $status === 401) && $this->dpopNonce !== null) {
+        if (($status === 400 || $status === 401)
+            && $this->dpopNonce !== null
+            && $this->dpopNonce !== $previousNonce
+        ) {
             $response = $this->sendDPopRequest($method, $url, $accessToken, $options);
         }
 
