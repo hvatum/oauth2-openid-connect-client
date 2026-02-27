@@ -89,6 +89,50 @@ final class ClientAssertionTraitTest extends TestCase
         $provider->debugAccessTokenRequestFromGrant('client_credentials');
     }
 
+    public function testExplicitRs384AlgorithmIsUsed(): void
+    {
+        [, $jwk] = $this->generateRsaPrivateJwk('rs384-test');
+        $jwk['alg'] = 'RS384';
+        $jwkPath = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKeyPath' => $jwkPath,
+            'keyId' => $jwk['kid'],
+        ]);
+
+        $request = $provider->debugAccessTokenRequestFromGrant('client_credentials');
+        parse_str((string)$request->getBody(), $params);
+
+        $assertion = $params['client_assertion'] ?? '';
+        $headerB64 = explode('.', $assertion)[0];
+        $header = json_decode(base64_decode(strtr($headerB64, '-_', '+/')), true);
+
+        self::assertSame('RS384', $header['alg']);
+    }
+
+    public function testForbiddenAlgorithmThrowsError(): void
+    {
+        [, $jwk] = $this->generateRsaPrivateJwk('forbidden-alg-test');
+        $jwk['alg'] = 'HS256';
+        $jwkPath = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKeyPath' => $jwkPath,
+            'keyId' => $jwk['kid'],
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('not allowed');
+
+        $provider->debugAccessTokenRequestFromGrant('client_credentials');
+    }
+
     public function testExplicitPs256AlgorithmIsUsed(): void
     {
         // Real test JWK with explicit PS256 algorithm
