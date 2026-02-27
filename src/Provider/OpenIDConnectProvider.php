@@ -381,11 +381,14 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     protected function createResourceOwner(array $response, AccessToken $token): OpenIDConnectResourceOwner
     {
-        // Merge ID token claims with userinfo response
-        // ID token claims take precedence (more authoritative, signed by IdP)
+        // Merge ID token claims with userinfo response (OIDC Core §5.3.2)
+        // Userinfo takes precedence — it has richer identity data.
+        // Filter out transport claims from ID token that shouldn't pollute the resource owner.
         if ($this->idToken !== null) {
             $idTokenClaims = $this->validateIdToken($this->idToken);
-            $response = array_merge($response, $idTokenClaims);
+            $transportClaims = ['at_hash', 'c_hash', 'nonce', 'auth_time', 'azp', 'acr', 'amr'];
+            $identityClaims = array_diff_key($idTokenClaims, array_flip($transportClaims));
+            $response = array_merge($identityClaims, $response);
         }
 
         return new OpenIDConnectResourceOwner($response);
