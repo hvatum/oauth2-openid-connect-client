@@ -169,6 +169,33 @@ final class IdTokenValidationTest extends TestCase
         self::assertSame('user-1', $result['sub']);
     }
 
+    public function testRejectsMissingMandatoryClaims(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        // Token missing 'exp' — should be rejected by mandatory claims check
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'iat' => time(),
+            'nonce' => 'n-1',
+            // deliberately omitting 'exp'
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('exp');
+        $provider->validateIdToken($idToken);
+    }
+
     public function testValidatesSignatureAndClaims(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();

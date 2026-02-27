@@ -759,7 +759,7 @@ class OpenIDConnectProvider extends AbstractProvider
              * in order to keep other claims as well
              */
 
-            $claimCheckerManager->check($decoded);
+            $claimCheckerManager->check($decoded, ['iss', 'sub', 'aud', 'exp', 'iat']);
         } catch (InvalidClaimException $e) {
             $this->logger->warning('ID token claim validation failed', [
                 'reason' => $e->getMessage(),
