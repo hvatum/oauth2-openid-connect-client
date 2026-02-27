@@ -124,6 +124,48 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertSame('S256', $parParams['code_challenge_method']);
     }
 
+    public function testParRequestIncludesClientSecretForSecretClients(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $provider->getAuthorizationUrl();
+
+        // history[0] = well-known, history[1] = PAR
+        self::assertCount(2, $history);
+        $parRequest = $history[1]['request'];
+        $parBody = (string)$parRequest->getBody();
+        parse_str($parBody, $parParams);
+
+        self::assertSame('client-123', $parParams['client_id']);
+        self::assertSame('secret-456', $parParams['client_secret']);
+    }
+
+    public function testParRequestUsesClientAssertionWhenConfigured(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $provider->getAuthorizationUrl();
+
+        // history[0] = well-known, history[1] = PAR
+        self::assertCount(2, $history);
+        $parRequest = $history[1]['request'];
+        $parBody = (string)$parRequest->getBody();
+        parse_str($parBody, $parParams);
+
+        self::assertSame('urn:ietf:params:oauth:client-assertion-type:jwt-bearer', $parParams['client_assertion_type']);
+        self::assertNotEmpty($parParams['client_assertion']);
+        self::assertArrayNotHasKey('client_secret', $parParams);
+    }
+
+
     public function testCachesPerWellKnownUrl(): void
     {
         $history = [];
