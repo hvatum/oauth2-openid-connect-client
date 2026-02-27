@@ -203,11 +203,11 @@ class OpenIDConnectProvider extends AbstractProvider
             );
         }
 
-        // Optional: Initialize DPoP
-        if (!empty($options['dpopPrivateKeyPath']) && !empty($options['dpopPublicKeyPath'])) {
+        // Optional: Initialize DPoP (public key is derived from private key if not provided)
+        if (!empty($options['dpopPrivateKeyPath'])) {
             $this->initializeDPoP(
                 $options['dpopPrivateKeyPath'],
-                $options['dpopPublicKeyPath']
+                $options['dpopPublicKeyPath'] ?? null
             );
         }
     }

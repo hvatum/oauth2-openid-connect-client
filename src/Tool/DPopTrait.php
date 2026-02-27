@@ -53,9 +53,9 @@ trait DPopTrait
      * Initialize DPoP with key pair
      *
      * @param string $privateKeyPath Path to PEM-encoded EC private key
-     * @param string $publicKeyPath Path to PEM-encoded EC public key
+     * @param string|null $publicKeyPath Path to PEM-encoded EC public key (optional, derived from private key if null)
      */
-    protected function initializeDPoP(string $privateKeyPath, string $publicKeyPath): void
+    protected function initializeDPoP(string $privateKeyPath, ?string $publicKeyPath = null): void
     {
         $this->dpopPrivateKeyPath = $privateKeyPath;
         $this->dpopPublicKeyPath = $publicKeyPath;
@@ -68,7 +68,7 @@ trait DPopTrait
      */
     protected function hasDPoP(): bool
     {
-        return $this->dpopPrivateKeyPath !== null && $this->dpopPublicKeyPath !== null;
+        return $this->dpopPrivateKeyPath !== null;
     }
 
     /**
@@ -205,13 +205,18 @@ trait DPopTrait
             return $this->dpopPublicKeyJwk;
         }
 
-        if (!file_exists($this->dpopPublicKeyPath)) {
-            throw new \RuntimeException(
-                "DPoP public key file not found: {$this->dpopPublicKeyPath}"
-            );
+        if ($this->dpopPublicKeyPath !== null) {
+            // Load from explicit public key file
+            if (!file_exists($this->dpopPublicKeyPath)) {
+                throw new \RuntimeException(
+                    "DPoP public key file not found: {$this->dpopPublicKeyPath}"
+                );
+            }
+            $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKeyFile($this->dpopPublicKeyPath);
+        } else {
+            // Derive from private key (private EC JWK contains all public components)
+            $jwk = $this->getDPopPrivateJwk();
         }
-
-        $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKeyFile($this->dpopPublicKeyPath);
 
         if ($jwk->get('kty') !== 'EC') {
             throw new \RuntimeException('DPoP public key must be EC type');
