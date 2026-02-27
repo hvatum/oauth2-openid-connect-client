@@ -282,12 +282,12 @@ trait DPopTrait
     ): \Psr\Http\Message\ResponseInterface {
         $response = $this->sendDPopRequest($method, $url, $accessToken, $options);
 
-        // Check if we got a nonce error (401 with use_dpop_nonce)
-        if ($response->getStatusCode() === 401) {
+        // RFC 9449 §8.2: nonce errors may use 400 or 401, indicated by DPoP-Nonce header
+        $status = $response->getStatusCode();
+        if ($status === 400 || $status === 401) {
             $nonceHeader = $response->getHeader('DPoP-Nonce');
             if (!empty($nonceHeader)) {
-                // Store nonce and retry
-                $this->setDPopNonce($nonceHeader[0]);
+                // Nonce was already stored by sendDPopRequest(); retry with it
                 $response = $this->sendDPopRequest($method, $url, $accessToken, $options);
             }
         }

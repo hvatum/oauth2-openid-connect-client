@@ -94,6 +94,36 @@ final class DPopTraitTest extends TestCase
         self::assertSame('https://[2001:db8::1]/resource', $payload['htu']);
     }
 
+    public function testDpopNonceRetryOn400(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            // First request: 400 with DPoP-Nonce header (nonce required)
+            new Response(400, ['DPoP-Nonce' => 'required-nonce'], json_encode([
+                'error' => 'use_dpop_nonce',
+                'error_description' => 'DPoP nonce required',
+            ])),
+            // Retry: 200 OK
+            new Response(200, ['DPoP-Nonce' => 'required-nonce'], '{"data":"ok"}'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $response = $provider->makeDPopRequest('GET', 'https://api.example.com/resource', 'token-123');
+
+        // Should have retried and succeeded
+        self::assertSame(200, $response->getStatusCode());
+        // history[0] = well-known, history[1] = first DPoP request, history[2] = retry
+        self::assertCount(3, $history);
+        self::assertSame('required-nonce', $provider->getDPopNonce());
+    }
+
     public function testDpopNonceIsPersistedFromApiResponse(): void
     {
         [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
