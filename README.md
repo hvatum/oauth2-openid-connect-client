@@ -24,7 +24,7 @@ composer require hvatum/oauth2-openid-connect-client
 
 ## Basic Usage
 
-The simplest setup — just point to a well-known endpoint:
+The simplest setup — just point to the issuer:
 
 ```php
 use Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider;
@@ -33,11 +33,12 @@ $provider = new OpenIDConnectProvider([
     'clientId'     => 'your-client-id',
     'clientSecret' => 'your-client-secret',
     'redirectUri'  => 'https://your-app.example/callback',
-    'wellKnownUrl' => 'https://your-idp.example/.well-known/openid-configuration',
+    'issuer'       => 'https://your-idp.example',
 ]);
 ```
 
-All endpoints (authorization, token, userinfo, JWKS, PAR) are automatically discovered.
+All endpoints (authorization, token, userinfo, JWKS, PAR) are automatically discovered
+from `{issuer}/.well-known/openid-configuration`.
 
 ### Authorization Code Flow
 
@@ -88,7 +89,7 @@ Use `private_key_jwt` instead of `client_secret` for client authentication:
 $provider = new OpenIDConnectProvider([
     'clientId'       => 'your-client-id',
     'redirectUri'    => 'https://your-app.example/callback',
-    'wellKnownUrl'   => 'https://your-idp.example/.well-known/openid-configuration',
+    'issuer'         => 'https://your-idp.example',
     'privateKeyPath' => '/path/to/private-key.pem',  // or .jwk
     'keyId'          => 'your-key-id',                // optional if in JWK file
 ]);
@@ -104,7 +105,7 @@ Bind access tokens to a cryptographic key pair to prevent token theft:
 $provider = new OpenIDConnectProvider([
     'clientId'            => 'your-client-id',
     'redirectUri'         => 'https://your-app.example/callback',
-    'wellKnownUrl'        => 'https://your-idp.example/.well-known/openid-configuration',
+    'issuer'              => 'https://your-idp.example',
     'privateKeyPath'      => '/path/to/client-key.pem',
     'dpopPrivateKeyPath'  => '/path/to/dpop-private.pem',
     'dpopPublicKeyPath'   => '/path/to/dpop-public.pem',

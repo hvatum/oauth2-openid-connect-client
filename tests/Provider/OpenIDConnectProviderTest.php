@@ -15,10 +15,10 @@ final class OpenIDConnectProviderTest extends TestCase
         \Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider::clearWellKnownCache();
     }
 
-    public function testConstructorRequiresWellKnownUrl(): void
+    public function testConstructorRequiresIssuer(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('wellKnownUrl is required');
+        $this->expectExceptionMessage('issuer is required');
 
         $history = [];
         $httpClient = TestHelper::httpClient([], $history);
@@ -30,7 +30,7 @@ final class OpenIDConnectProviderTest extends TestCase
         ]);
     }
 
-    public function testBasicProviderWithOnlyWellKnownUrl(): void
+    public function testBasicProviderWithIssuer(): void
     {
         $history = [];
         $provider = TestHelper::basicProvider([
@@ -194,23 +194,52 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getResourceOwnerDetailsUrl($token);
     }
 
-    public function testCachesPerWellKnownUrl(): void
+    public function testCachesPerIssuer(): void
     {
         $history = [];
         TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(['issuer' => 'https://first-issuer', 'authorization_endpoint' => 'https://first/auth']),
+            TestHelper::wellKnownResponse(),
         ], $history);
 
         $history2 = [];
         $provider2 = TestHelper::basicProvider([
             TestHelper::wellKnownResponse([
-                'issuer' => 'https://second-issuer',
-                'authorization_endpoint' => 'https://second/auth',
+                'issuer' => 'https://second.test',
+                'authorization_endpoint' => 'https://second.test/auth',
             ]),
         ], $history2, [
-            'wellKnownUrl' => 'https://second/.well-known/openid-configuration',
+            'issuer' => 'https://second.test',
         ]);
 
-        self::assertSame('https://second/auth', $provider2->getBaseAuthorizationUrl());
+        self::assertSame('https://second.test/auth', $provider2->getBaseAuthorizationUrl());
+    }
+
+    public function testIssuerMismatchInDiscoveryThrows(): void
+    {
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Issuer mismatch in discovery document');
+
+        $history = [];
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(['issuer' => 'https://evil.example.com']),
+        ], $history);
+    }
+
+    public function testWellKnownUrlOverride(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(['issuer' => 'https://idp.test']),
+        ], $history, [
+            'issuer' => 'https://idp.test',
+            'wellKnownUrl' => 'https://idp.test/custom/.well-known/openid-configuration',
+        ]);
+
+        self::assertSame('https://idp.test', $provider->getIssuerUrl());
+        // Verify the custom well-known URL was fetched
+        self::assertSame(
+            'https://idp.test/custom/.well-known/openid-configuration',
+            (string) $history[0]['request']->getUri()
+        );
     }
 }

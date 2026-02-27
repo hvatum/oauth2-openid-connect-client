@@ -83,9 +83,9 @@ class OpenIDConnectProvider extends AbstractProvider
     public const CLOCK_SKEW_LEEWAY = 60;
 
     /**
-     * Well-known configuration endpoint URL
+     * Configured issuer identifier (from constructor option)
      */
-    protected string $wellKnownUrl;
+    protected string $expectedIssuer;
 
     /**
      * Dynamically loaded endpoints from well-known config
@@ -146,9 +146,10 @@ class OpenIDConnectProvider extends AbstractProvider
      * Initialize OpenID Connect provider
      *
      * Required options:
-     * - wellKnownUrl: URL to the .well-known/openid-configuration endpoint
+     * - issuer: Issuer identifier URL (e.g., 'https://idp.example.com')
      *
      * Optional options:
+     * - wellKnownUrl: Override the auto-derived well-known URL (for non-standard paths)
      * - privateKeyPath: Path to private key for client assertion (RFC 7523)
      * - keyId: Key ID for client assertion
      * - dpopPrivateKeyPath: Path to DPoP private key (RFC 9449)
@@ -160,8 +161,8 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     public function __construct(array $options = [], array $collaborators = [])
     {
-        if (empty($options['wellKnownUrl'])) {
-            throw new \InvalidArgumentException('wellKnownUrl is required for OpenID Connect discovery');
+        if (empty($options['issuer'])) {
+            throw new \InvalidArgumentException('issuer is required for OpenID Connect discovery');
         }
 
         // Initialize logger (use NullLogger if not provided)
@@ -178,9 +179,11 @@ class OpenIDConnectProvider extends AbstractProvider
             $this->cacheDir = $options['cacheDir'];
         }
 
-        // Load well-known configuration (required)
-        $this->wellKnownUrl = $options['wellKnownUrl'];
-        $this->loadWellKnownConfiguration($this->wellKnownUrl);
+        // Derive well-known URL from issuer, or use explicit override
+        $this->expectedIssuer = $options['issuer'];
+        $wellKnownUrl = $options['wellKnownUrl']
+            ?? rtrim($this->expectedIssuer, '/') . '/.well-known/openid-configuration';
+        $this->loadWellKnownConfiguration($wellKnownUrl, $this->expectedIssuer);
 
         $this->logger->debug('OpenID Connect provider initialized', [
             'issuer' => $this->issuerUrl,
@@ -859,7 +862,7 @@ class OpenIDConnectProvider extends AbstractProvider
     {
         if ($this->authorizationUrl === null) {
             throw new \RuntimeException(
-                'Endpoints not loaded. Provide wellKnownUrl in options or call loadWellKnownConfiguration()'
+                'Endpoints not loaded. Provide issuer in options or call loadWellKnownConfiguration()'
             );
         }
     }

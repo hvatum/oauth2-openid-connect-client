@@ -67,7 +67,7 @@ final class TestHelper
     }
 
     /**
-     * Create a provider with only wellKnownUrl (no client assertion, no DPoP)
+     * Create a provider with issuer (no client assertion, no DPoP)
      */
     public static function basicProvider(array $responses, array &$history, array $options = []): TestProvider
     {
@@ -80,7 +80,7 @@ final class TestHelper
             'clientId' => 'client-123',
             'clientSecret' => 'secret-456',
             'redirectUri' => 'https://app.example/callback',
-            'wellKnownUrl' => 'https://idp.test/.well-known/openid-configuration',
+            'issuer' => 'https://idp.test',
             'cacheDir' => sys_get_temp_dir() . '/oauth2-oidc-tests-' . uniqid(),
         ], $options), [
             'httpClient' => $httpClient,

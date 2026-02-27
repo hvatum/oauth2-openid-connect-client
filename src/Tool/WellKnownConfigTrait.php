@@ -33,10 +33,11 @@ trait WellKnownConfigTrait
      * Load well-known configuration from endpoint
      *
      * @param string $wellKnownUrl
+     * @param string $expectedIssuer Expected issuer for validation (OIDC Discovery §4.3)
      * @throws IdentityProviderException
      * @throws \InvalidArgumentException
      */
-    protected function loadWellKnownConfiguration(string $wellKnownUrl): void
+    protected function loadWellKnownConfiguration(string $wellKnownUrl, string $expectedIssuer): void
     {
         // Enforce HTTPS for security - prevents MITM attacks on configuration discovery
         $scheme = parse_url($wellKnownUrl, PHP_URL_SCHEME);
@@ -48,7 +49,9 @@ trait WellKnownConfigTrait
 
         // Check in-memory cache first
         if (isset(self::$wellKnownConfigCache[$wellKnownUrl])) {
-            $this->setEndpointsFromConfig(self::$wellKnownConfigCache[$wellKnownUrl]);
+            $config = self::$wellKnownConfigCache[$wellKnownUrl];
+            $this->validateWellKnownConfig($config, $expectedIssuer);
+            $this->setEndpointsFromConfig($config);
             return;
         }
 
@@ -57,6 +60,7 @@ trait WellKnownConfigTrait
         $cachedConfig = $this->loadWellKnownFromCache($cacheFile);
 
         if ($cachedConfig !== null) {
+            $this->validateWellKnownConfig($cachedConfig, $expectedIssuer);
             self::$wellKnownConfigCache[$wellKnownUrl] = $cachedConfig;
             $this->setEndpointsFromConfig($cachedConfig);
             return;
@@ -86,17 +90,7 @@ trait WellKnownConfigTrait
                 );
             }
 
-            // Validate required fields
-            $requiredFields = ['issuer', 'authorization_endpoint', 'token_endpoint'];
-            foreach ($requiredFields as $field) {
-                if (!isset($config[$field])) {
-                    throw new IdentityProviderException(
-                        "Invalid well-known configuration: missing {$field}",
-                        0,
-                        $response
-                    );
-                }
-            }
+            $this->validateWellKnownConfig($config, $expectedIssuer);
 
             // Cache the configuration
             self::$wellKnownConfigCache[$wellKnownUrl] = $config;
@@ -113,6 +107,40 @@ trait WellKnownConfigTrait
                 0,
                 null,
                 $e
+            );
+        }
+    }
+
+    /**
+     * Validate well-known configuration has required fields and correct issuer
+     *
+     * @param array $config
+     * @param string $expectedIssuer
+     * @throws IdentityProviderException
+     */
+    protected function validateWellKnownConfig(array $config, string $expectedIssuer): void
+    {
+        $requiredFields = ['issuer', 'authorization_endpoint', 'token_endpoint'];
+        foreach ($requiredFields as $field) {
+            if (!isset($config[$field])) {
+                throw new IdentityProviderException(
+                    "Invalid well-known configuration: missing {$field}",
+                    0,
+                    null
+                );
+            }
+        }
+
+        // OIDC Discovery §4.3: issuer in response must match expected issuer
+        if ($config['issuer'] !== $expectedIssuer) {
+            throw new IdentityProviderException(
+                sprintf(
+                    'Issuer mismatch in discovery document: expected "%s", got "%s"',
+                    $expectedIssuer,
+                    $config['issuer']
+                ),
+                0,
+                null
             );
         }
     }
