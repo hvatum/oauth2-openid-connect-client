@@ -222,6 +222,12 @@ class OpenIDConnectProvider extends AbstractProvider
     public function getResourceOwnerDetailsUrl(AccessToken $token): string
     {
         $this->ensureEndpointsLoaded();
+        if ($this->userInfoUrl === null) {
+            throw new \RuntimeException(
+                'UserInfo endpoint not available. The authorization server discovery response '
+                . 'did not include a userinfo_endpoint.'
+            );
+        }
         return $this->userInfoUrl;
     }
 

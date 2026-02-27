@@ -87,7 +87,7 @@ trait WellKnownConfigTrait
             }
 
             // Validate required fields
-            $requiredFields = ['issuer', 'authorization_endpoint', 'token_endpoint', 'userinfo_endpoint'];
+            $requiredFields = ['issuer', 'authorization_endpoint', 'token_endpoint'];
             foreach ($requiredFields as $field) {
                 if (!isset($config[$field])) {
                     throw new IdentityProviderException(
@@ -126,7 +126,7 @@ trait WellKnownConfigTrait
     {
         $this->authorizationUrl = $config['authorization_endpoint'];
         $this->tokenUrl = $config['token_endpoint'];
-        $this->userInfoUrl = $config['userinfo_endpoint'];
+        $this->userInfoUrl = $config['userinfo_endpoint'] ?? null;
         $this->issuerUrl = $config['issuer'];
         $this->jwksUrl = $config['jwks_uri'] ?? null;
         $this->parUrl = $config['pushed_authorization_request_endpoint'] ?? null;
