@@ -635,6 +635,7 @@ class OpenIDConnectProvider extends AbstractProvider
     public function setNonce(string $nonce): void
     {
         $this->nonce = $nonce;
+        $this->validatedIdTokenClaims = null;
     }
 
     /**
@@ -658,6 +659,7 @@ class OpenIDConnectProvider extends AbstractProvider
     public function setCallbackIssuer(?string $issuer): void
     {
         $this->callbackIssuer = $issuer;
+        $this->validatedIdTokenClaims = null;
     }
 
     /**

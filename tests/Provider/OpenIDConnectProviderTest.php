@@ -276,6 +276,66 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertSame($idToken, $provider->getIdToken());
     }
 
+    public function testGetIdTokenRevalidatesAfterCallbackIssuerChange(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            TestHelper::jwksResponse($jwk),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->getAccessToken('client_credentials');
+        self::assertSame($idToken, $provider->getIdToken());
+
+        $provider->setCallbackIssuer('https://evil.example.com');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Issuer mismatch');
+        $provider->getIdToken();
+    }
+
+    public function testGetIdTokenRevalidatesAfterNonceChange(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            TestHelper::jwksResponse($jwk),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+        $provider->getAccessToken('client_credentials');
+        self::assertSame($idToken, $provider->getIdToken());
+
+        $provider->setNonce('n-2');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('nonce');
+        $provider->getIdToken();
+    }
+
     public function testCachesPerIssuer(): void
     {
         $history = [];
