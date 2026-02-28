@@ -267,7 +267,7 @@ class OpenIDConnectProvider extends AbstractProvider
         $request = parent::getAccessTokenRequest($params);
 
         if ($this->hasDPoP()) {
-            $proof = $this->createDPopProof('POST', (string) $request->getUri());
+            $proof = $this->createDPopProof('POST', $request->getUri());
             $request = $request->withHeader('DPoP', $proof);
             $this->logger->debug('DPoP proof attached to token request', [
                 'uri' => (string) $request->getUri(),

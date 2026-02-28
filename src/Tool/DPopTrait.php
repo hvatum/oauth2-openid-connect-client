@@ -11,6 +11,7 @@ use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\JWSBuilder;
 use Jose\Component\Signature\Serializer\CompactSerializer;
 use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\UriInterface;
 
 /**
  * DPoP (Demonstrating Proof of Possession) Trait
@@ -76,7 +77,7 @@ trait DPopTrait
      * Create DPoP proof JWT
      *
      * @param string $httpMethod HTTP method (e.g., 'POST', 'GET')
-     * @param string $targetUri Target URI (without query/fragment)
+     * @param string|UriInterface $targetUri Target URI
      * @param string|null $accessToken Access token to bind (for API calls)
      * @param string|null $nonce Server-provided nonce
      * @return string DPoP proof JWT
@@ -84,7 +85,7 @@ trait DPopTrait
      */
     protected function createDPopProof(
         string $httpMethod,
-        string $targetUri,
+        string|UriInterface $targetUri,
         ?string $accessToken = null,
         ?string $nonce = null
     ): string {
@@ -99,17 +100,16 @@ trait DPopTrait
         // Use stored nonce if not provided
         $nonce = $nonce ?? $this->dpopNonce;
 
-        // Strip query and fragment from target URI per RFC 9449 Section 4.2
-        $parsed = parse_url($targetUri);
-        $host = $parsed['host'] ?? '';
-        // Preserve IPv6 bracket notation for hosts that contain ':'
-        // but aren't already bracketed (parse_url behavior varies by PHP version)
-        if ($host !== '' && strpos($host, ':') !== false && $host[0] !== '[') {
-            $host = '[' . $host . ']';
+        if (is_string($targetUri)) {
+            $targetUri = $this->getRequest('GET', $targetUri)->getUri();
         }
-        $htu = ($parsed['scheme'] ?? '') . '://' . $host
-            . (isset($parsed['port']) ? ':' . $parsed['port'] : '')
-            . ($parsed['path'] ?? '/');
+
+        // RFC 9449 §4.2: htu is the target URI without query/fragment.
+        $htuUri = $targetUri->withQuery('')->withFragment('');
+        if ($htuUri->getPath() === '') {
+            $htuUri = $htuUri->withPath('/');
+        }
+        $htu = (string) $htuUri;
 
         // Build DPoP proof payload (RFC 9449)
         $payloadData = [
@@ -318,11 +318,10 @@ trait DPopTrait
         string $accessToken,
         array $options = []
     ): \Psr\Http\Message\ResponseInterface {
-        // Create DPoP proof (will include nonce if set)
-        $dpopProof = $this->createDPopProof($method, $url, $accessToken);
-
         // Build request
         $request = $this->getRequest($method, $url);
+        // Create DPoP proof (will include nonce if set)
+        $dpopProof = $this->createDPopProof($method, $request->getUri(), $accessToken);
         $request = $request
             ->withHeader('Authorization', 'DPoP ' . $accessToken)
             ->withHeader('DPoP', $dpopProof);
