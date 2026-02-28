@@ -153,6 +153,15 @@ final class TestHelper
         return $path;
     }
 
+    public static function tokenErrorResponse(int $status, string $error, string $description = ''): Response
+    {
+        $body = ['error' => $error];
+        if ($description !== '') {
+            $body['error_description'] = $description;
+        }
+        return new Response($status, ['Content-Type' => 'application/json'], json_encode($body));
+    }
+
     public static function signIdToken(array $claims, string $privateKey, string $kid): string
     {
         // Convert PEM private key to JWK

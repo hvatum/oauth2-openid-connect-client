@@ -303,6 +303,22 @@ final class OpenIDConnectProviderTest extends TestCase
         ]);
     }
 
+    public function testTokenEndpointErrorThrowsException(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenErrorResponse(400, 'invalid_grant', 'Authorization code expired'),
+        ], $history);
+
+        $provider->setPkceCode('verifier');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Authorization code expired');
+
+        $provider->getAccessToken('authorization_code', ['code' => 'expired-code']);
+    }
+
     public function testWellKnownUrlOverride(): void
     {
         $history = [];
@@ -314,7 +330,6 @@ final class OpenIDConnectProviderTest extends TestCase
         ]);
 
         self::assertSame('https://idp.test', $provider->getIssuerUrl());
-        // Verify the custom well-known URL was fetched
         self::assertSame(
             'https://idp.test/custom/.well-known/openid-configuration',
             (string) $history[0]['request']->getUri()
