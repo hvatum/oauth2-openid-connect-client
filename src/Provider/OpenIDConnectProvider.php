@@ -125,6 +125,7 @@ class OpenIDConnectProvider extends AbstractProvider
      * ID token from last token response
      */
     protected ?string $idToken = null;
+    protected ?array $validatedIdTokenClaims = null;
 
     /**
      * Cached JWKS data
@@ -378,6 +379,7 @@ class OpenIDConnectProvider extends AbstractProvider
      * @param array $response
      * @param AccessToken $token
      * @return OpenIDConnectResourceOwner
+     * @throws IdentityProviderException If ID token validation fails or UserInfo sub does not match
      */
     protected function createResourceOwner(array $response, AccessToken $token): OpenIDConnectResourceOwner
     {
@@ -385,7 +387,7 @@ class OpenIDConnectProvider extends AbstractProvider
         // Userinfo takes precedence — it has richer identity data.
         // Filter out transport claims from ID token that shouldn't pollute the resource owner.
         if ($this->idToken !== null) {
-            $idTokenClaims = $this->validateIdToken($this->idToken);
+            $idTokenClaims = $this->getValidatedIdTokenClaims();
 
             // OIDC Core §5.3.2: sub in UserInfo MUST exactly match ID token sub.
             if (isset($response['sub']) && $response['sub'] !== $idTokenClaims['sub']) {
@@ -482,6 +484,7 @@ class OpenIDConnectProvider extends AbstractProvider
         // Store ID token if present
         if (isset($parsed['id_token'])) {
             $this->idToken = $parsed['id_token'];
+            $this->validatedIdTokenClaims = null;
         }
 
         return $parsed;
@@ -581,10 +584,37 @@ class OpenIDConnectProvider extends AbstractProvider
      * Get the stored ID token from last authentication
      *
      * @return string|null
+     * @throws IdentityProviderException If the stored ID token fails validation
      */
     public function getIdToken(): ?string
     {
+        if ($this->idToken !== null) {
+            // Ensure callers do not consume an unvalidated ID token.
+            // Throws on error
+            $this->getValidatedIdTokenClaims();
+        }
+
+        // Return all the original token, not just the validated claims
         return $this->idToken;
+    }
+
+    /**
+     * Validate and cache claims for the stored ID token.
+     *
+     * @return array|null
+     * @throws IdentityProviderException If the stored ID token fails validation
+     */
+    protected function getValidatedIdTokenClaims(): ?array
+    {
+        if ($this->idToken === null) {
+            return null;
+        }
+
+        if ($this->validatedIdTokenClaims === null) {
+            $this->validatedIdTokenClaims = $this->validateIdToken($this->idToken);
+        }
+
+        return $this->validatedIdTokenClaims;
     }
 
     /**

@@ -229,6 +229,53 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getResourceOwner($token);
     }
 
+    public function testGetIdTokenValidatesBeforeReturning(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://evil.example.com',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->getAccessToken('client_credentials');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('iss');
+        $provider->getIdToken();
+    }
+
+    public function testGetIdTokenReturnsValidatedToken(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->getAccessToken('client_credentials');
+        self::assertSame($idToken, $provider->getIdToken());
+    }
+
     public function testCachesPerIssuer(): void
     {
         $history = [];
