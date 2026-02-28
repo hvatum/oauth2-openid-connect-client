@@ -10,6 +10,7 @@ use Jose\Component\Core\Util\Base64UrlSafe;
 use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\JWSBuilder;
 use Jose\Component\Signature\Serializer\CompactSerializer;
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * DPoP (Demonstrating Proof of Possession) Trait
@@ -286,16 +287,17 @@ trait DPopTrait
         array $options = []
     ): \Psr\Http\Message\ResponseInterface {
         $previousNonce = $this->dpopNonce;
-        $response = $this->sendDPopRequest($method, $url, $accessToken, $options);
+        $response = $this->executeDPopRequest($method, $url, $accessToken, $options);
 
-        // RFC 9449 §8.2: retry only when the server signals a nonce requirement
-        // by returning a DPoP-Nonce header with a 400/401 status and the nonce changed
-        $status = $response->getStatusCode();
-        if (($status === 400 || $status === 401)
-            && $this->dpopNonce !== null
-            && $this->dpopNonce !== $previousNonce
-        ) {
-            $response = $this->sendDPopRequest($method, $url, $accessToken, $options);
+        // RFC 9449 allows servers to provide/rotate nonce values proactively,
+        // so the latest nonce should be captured whenever received.
+        $this->updateDPopNonceFromResponse($response);
+
+        // RFC 9449 §8 and §9: retry once when server explicitly signals use_dpop_nonce
+        // and provides a different nonce in DPoP-Nonce.
+        if ($this->shouldRetryWithDPopNonce($response, $previousNonce)) {
+            $response = $this->executeDPopRequest($method, $url, $accessToken, $options);
+            $this->updateDPopNonceFromResponse($response);
         }
 
         return $response;
@@ -339,29 +341,76 @@ trait DPopTrait
             }
         }
 
-        // Send request — catch HTTP client exceptions (e.g., Guzzle throws on 4xx)
-        // to extract DPoP-Nonce from error responses for nonce retry logic
+        // Send request only; nonce extraction and retry policy live in makeDPopRequest().
+        return $this->getHttpClient()->send($request);
+    }
+
+    /**
+     * Send request and unwrap response from clients that throw on 4xx/5xx.
+     */
+    protected function executeDPopRequest(
+        string $method,
+        string $url,
+        string $accessToken,
+        array $options = []
+    ): ResponseInterface {
         try {
-            $response = $this->getHttpClient()->send($request);
+            return $this->sendDPopRequest($method, $url, $accessToken, $options);
         } catch (\Throwable $e) {
-            // Extract response from Guzzle-style exceptions
-            if (method_exists($e, 'getResponse') && ($response = $e->getResponse()) !== null) {
-                // Extract nonce before returning error response
-                $nonceHeader = $response->getHeader('DPoP-Nonce');
-                if (!empty($nonceHeader)) {
-                    $this->setDPopNonce($nonceHeader[0]);
+            if (method_exists($e, 'getResponse')) {
+                $response = $e->getResponse();
+                if ($response instanceof ResponseInterface) {
+                    return $response;
                 }
-                return $response;
             }
             throw $e;
         }
+    }
 
-        // Store nonce from response for future requests
+    /**
+     * Persist nonce from DPoP-Nonce response header if present.
+     */
+    protected function updateDPopNonceFromResponse(ResponseInterface $response): void
+    {
         $nonceHeader = $response->getHeader('DPoP-Nonce');
-        if (!empty($nonceHeader)) {
+        if (!empty($nonceHeader) && $nonceHeader[0] !== '') {
             $this->setDPopNonce($nonceHeader[0]);
         }
+    }
 
-        return $response;
+    /**
+     * Retry only when nonce requirement is explicitly signaled by the server.
+     */
+    protected function shouldRetryWithDPopNonce(ResponseInterface $response, ?string $previousNonce): bool
+    {
+        $status = $response->getStatusCode();
+        if ($status !== 400 && $status !== 401) {
+            return false;
+        }
+
+        if ($this->dpopNonce === null || $this->dpopNonce === $previousNonce) {
+            return false;
+        }
+
+        return $this->isUseDPopNonceError($response);
+    }
+
+    /**
+     * Detect RFC 9449 nonce-required error.
+     */
+    protected function isUseDPopNonceError(ResponseInterface $response): bool
+    {
+        $wwwAuthenticate = $response->getHeaderLine('WWW-Authenticate');
+        if ($wwwAuthenticate !== ''
+            && stripos($wwwAuthenticate, 'dpop') !== false
+            && preg_match('/error\s*=\s*"?use_dpop_nonce"?/i', $wwwAuthenticate) === 1
+        ) {
+            return true;
+        }
+
+        $body = (string) $response->getBody();
+        $data = json_decode($body, true);
+
+        return is_array($data) && ($data['error'] ?? null) === 'use_dpop_nonce';
     }
 }
