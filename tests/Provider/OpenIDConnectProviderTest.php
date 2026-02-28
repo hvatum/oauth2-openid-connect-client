@@ -319,6 +319,39 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getAccessToken('authorization_code', ['code' => 'expired-code']);
     }
 
+    public function testParErrorThrowsException(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(400, ['Content-Type' => 'application/json'], json_encode([
+                'error' => 'invalid_request',
+                'error_description' => 'Missing required parameter',
+            ])),
+        ], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('invalid_request');
+
+        $provider->getAuthorizationUrl();
+    }
+
+    public function testParMissingRequestUriThrowsException(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(201, ['Content-Type' => 'application/json'], json_encode([
+                'expires_in' => 60,
+            ])),
+        ], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('request_uri');
+
+        $provider->getAuthorizationUrl();
+    }
+
     public function testDiscoveryRejectsNonHttpsWellKnownUrl(): void
     {
         $this->expectException(\InvalidArgumentException::class);
