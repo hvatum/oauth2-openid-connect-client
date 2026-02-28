@@ -145,6 +145,26 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertSame('secret-456', $parParams['client_secret']);
     }
 
+    public function testParRequestOmitsClientSecretWhenSecretIsEmpty(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse(),
+        ], $history, [
+            'clientSecret' => '',
+        ]);
+
+        $provider->getAuthorizationUrl();
+
+        self::assertCount(2, $history);
+        $parRequest = $history[1]['request'];
+        parse_str((string) $parRequest->getBody(), $parParams);
+
+        self::assertArrayNotHasKey('client_secret', $parParams);
+        self::assertArrayNotHasKey('client_assertion', $parParams);
+    }
+
     public function testParRequestUsesClientAssertionWhenConfigured(): void
     {
         $history = [];
