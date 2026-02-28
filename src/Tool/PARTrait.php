@@ -80,8 +80,7 @@ trait PARTrait
             throw new IdentityProviderException(
                 'PAR request failed: ' . $e->getMessage(),
                 0,
-                null,
-                $e
+                null
             );
         }
     }
