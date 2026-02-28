@@ -783,6 +783,16 @@ class OpenIDConnectProvider extends AbstractProvider
                 $mandatoryClaims[] = 'nonce';
             }
             $claimCheckerManager->check($decoded, $mandatoryClaims);
+        } catch (MissingMandatoryClaimException $e) {
+            $this->logger->warning('ID token missing mandatory claims', [
+                'reason' => $e->getMessage(),
+                'claims' => $e->getClaims(),
+            ]);
+            throw new IdentityProviderException(
+                'ID token claim validation failed: ' . $e->getMessage(),
+                0,
+                null
+            );
         } catch (InvalidClaimException $e) {
             $this->logger->warning('ID token claim validation failed', [
                 'reason' => $e->getMessage(),
