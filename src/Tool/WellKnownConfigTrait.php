@@ -66,9 +66,11 @@ trait WellKnownConfigTrait
 
         if ($cachedConfig !== null) {
             $this->validateWellKnownConfig($cachedConfig, $expectedIssuer);
+            $loadedAt = filemtime($cacheFile);
             self::$wellKnownConfigCache[$wellKnownUrl] = [
                 'config' => $cachedConfig,
-                'loaded_at' => time(),
+                // Preserve file cache age so in-memory cache does not outlive TTL.
+                'loaded_at' => is_int($loadedAt) ? $loadedAt : time(),
             ];
             $this->setEndpointsFromConfig($cachedConfig);
             return;
