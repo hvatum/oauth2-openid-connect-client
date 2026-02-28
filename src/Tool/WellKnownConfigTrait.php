@@ -49,10 +49,15 @@ trait WellKnownConfigTrait
 
         // Check in-memory cache first
         if (isset(self::$wellKnownConfigCache[$wellKnownUrl])) {
-            $config = self::$wellKnownConfigCache[$wellKnownUrl];
-            $this->validateWellKnownConfig($config, $expectedIssuer);
-            $this->setEndpointsFromConfig($config);
-            return;
+            $cachedEntry = self::$wellKnownConfigCache[$wellKnownUrl];
+            if ($this->isFreshInMemoryWellKnownCacheEntry($cachedEntry)) {
+                $config = $cachedEntry['config'];
+                $this->validateWellKnownConfig($config, $expectedIssuer);
+                $this->setEndpointsFromConfig($config);
+                return;
+            }
+
+            unset(self::$wellKnownConfigCache[$wellKnownUrl]);
         }
 
         // Check file cache
@@ -61,7 +66,10 @@ trait WellKnownConfigTrait
 
         if ($cachedConfig !== null) {
             $this->validateWellKnownConfig($cachedConfig, $expectedIssuer);
-            self::$wellKnownConfigCache[$wellKnownUrl] = $cachedConfig;
+            self::$wellKnownConfigCache[$wellKnownUrl] = [
+                'config' => $cachedConfig,
+                'loaded_at' => time(),
+            ];
             $this->setEndpointsFromConfig($cachedConfig);
             return;
         }
@@ -93,7 +101,10 @@ trait WellKnownConfigTrait
             $this->validateWellKnownConfig($config, $expectedIssuer);
 
             // Cache the configuration
-            self::$wellKnownConfigCache[$wellKnownUrl] = $config;
+            self::$wellKnownConfigCache[$wellKnownUrl] = [
+                'config' => $config,
+                'loaded_at' => time(),
+            ];
             $this->saveWellKnownToCache($cacheFile, $config);
 
             // Set endpoints
@@ -240,8 +251,55 @@ trait WellKnownConfigTrait
      */
     protected function getCacheNamespace(): string
     {
-        $user = function_exists('get_current_user') ? get_current_user() : null;
-        return $user !== false && $user !== null ? md5((string)$user) : 'default';
+        $identifier = $this->getRuntimeUserIdentifier();
+        return $identifier !== null ? hash('sha256', $identifier) : 'default';
+    }
+
+    /**
+     * Get runtime user identifier for cache namespacing.
+     */
+    protected function getRuntimeUserIdentifier(): ?string
+    {
+        if (function_exists('posix_geteuid')) {
+            $uid = posix_geteuid();
+            if (is_int($uid) && $uid >= 0) {
+                return 'uid:' . $uid;
+            }
+        }
+
+        $user = getenv('USER');
+        if (is_string($user) && $user !== '') {
+            return 'user:' . $user;
+        }
+
+        $username = getenv('USERNAME');
+        if (is_string($username) && $username !== '') {
+            return 'user:' . $username;
+        }
+
+        return null;
+    }
+
+    /**
+     * Validate structure and TTL of in-memory well-known cache entry.
+     *
+     * @param mixed $entry
+     */
+    protected function isFreshInMemoryWellKnownCacheEntry($entry): bool
+    {
+        if (!is_array($entry)) {
+            return false;
+        }
+
+        if (!isset($entry['config'], $entry['loaded_at'])) {
+            return false;
+        }
+
+        if (!is_array($entry['config']) || !is_int($entry['loaded_at'])) {
+            return false;
+        }
+
+        return (time() - $entry['loaded_at']) <= $this->wellKnownCacheTtl;
     }
 
     /**
