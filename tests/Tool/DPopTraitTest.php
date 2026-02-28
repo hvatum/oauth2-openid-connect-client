@@ -182,6 +182,86 @@ final class DPopTraitTest extends TestCase
         self::assertSame('required-nonce', $provider->getDPopNonce());
     }
 
+    public function testDpopNonceIsIncludedInRetryProof(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(400, ['DPoP-Nonce' => 'server-nonce'], json_encode([
+                'error' => 'use_dpop_nonce',
+            ])),
+            new Response(200, ['DPoP-Nonce' => 'server-nonce'], '{"data":"ok"}'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->makeDPopRequest('GET', 'https://api.example.com/resource', 'token-123');
+
+        // Verify the retry request (history[2]) includes the nonce in the DPoP proof
+        self::assertCount(3, $history);
+        $retryDpop = $history[2]['request']->getHeaderLine('DPoP');
+        $retryPayload = json_decode(base64_decode(strtr(explode('.', $retryDpop)[1], '-_', '+/')), true);
+        self::assertSame('server-nonce', $retryPayload['nonce']);
+    }
+
+    public function testDpopAthClaimIsCorrect(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(200, [], '{"data":"ok"}'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $accessToken = 'my-access-token-value';
+        $provider->makeDPopRequest('GET', 'https://api.example.com/resource', $accessToken);
+
+        $dpopHeader = $history[1]['request']->getHeaderLine('DPoP');
+        $payload = json_decode(base64_decode(strtr(explode('.', $dpopHeader)[1], '-_', '+/')), true);
+
+        // ath = base64url(sha256(access_token))
+        $expectedAth = rtrim(strtr(base64_encode(hash('sha256', $accessToken, true)), '+/', '-_'), '=');
+        self::assertSame($expectedAth, $payload['ath']);
+    }
+
+    public function testDpopJtiIsUnique(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(200, [], '{}'),
+            new Response(200, [], '{}'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->makeDPopRequest('GET', 'https://api.example.com/a', 'token-1');
+        $provider->makeDPopRequest('GET', 'https://api.example.com/b', 'token-2');
+
+        $extractJti = function (int $index) use ($history): string {
+            $dpop = $history[$index]['request']->getHeaderLine('DPoP');
+            return json_decode(base64_decode(strtr(explode('.', $dpop)[1], '-_', '+/')), true)['jti'];
+        };
+
+        self::assertNotSame($extractJti(1), $extractJti(2));
+    }
+
     public function testDpopNonceIsPersistedFromApiResponse(): void
     {
         [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
