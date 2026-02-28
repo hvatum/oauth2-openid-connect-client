@@ -591,4 +591,82 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertNull($loadFromCache($cacheFile));
         self::assertFileDoesNotExist($cacheFile);
     }
+
+    public function testGetJwksThrowsOnHttpError(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            new Response(500, [], 'Internal Server Error'),
+        ], $history);
+
+        $provider->getAccessToken('client_credentials');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Failed to fetch JWKS');
+
+        $provider->getIdToken();
+    }
+
+    public function testGetJwksThrowsOnInvalidJsonResponse(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            new Response(200, ['Content-Type' => 'application/json'], '{not-json'),
+        ], $history);
+
+        $provider->getAccessToken('client_credentials');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Invalid JWKS response format');
+
+        $provider->getIdToken();
+    }
+
+    public function testGetJwksThrowsOnMissingKeysArray(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            new Response(200, ['Content-Type' => 'application/json'], '{"foo":"bar"}'),
+        ], $history);
+
+        $provider->getAccessToken('client_credentials');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Invalid JWKS response format');
+
+        $provider->getIdToken();
+    }
 }
