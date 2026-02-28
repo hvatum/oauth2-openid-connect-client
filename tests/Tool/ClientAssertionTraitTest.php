@@ -194,6 +194,61 @@ final class ClientAssertionTraitTest extends TestCase
         self::assertSame('ES256', $header['alg']);
     }
 
+    public function testMissingPrivateKeyFileThrowsError(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKeyPath' => '/tmp/does-not-exist-' . bin2hex(random_bytes(8)),
+            'keyId' => 'missing-file',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Private key file not found');
+        $provider->debugAccessTokenRequestFromGrant('client_credentials');
+    }
+
+    public function testJwkSetJsonThrowsError(): void
+    {
+        $jwkSetPath = TestHelper::createTempKeyFile(json_encode([
+            'keys' => [],
+        ]));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKeyPath' => $jwkSetPath,
+            'keyId' => 'set-key',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unsupported or missing key type');
+        $provider->debugAccessTokenRequestFromGrant('client_credentials');
+    }
+
+    public function testUnsupportedJwkKeyTypeThrowsError(): void
+    {
+        $octPath = TestHelper::createTempKeyFile(json_encode([
+            'kty' => 'oct',
+            'k' => 'AQAB',
+            'kid' => 'oct-key',
+        ]));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKeyPath' => $octPath,
+            'keyId' => 'oct-key',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unsupported or missing key type');
+        $provider->debugAccessTokenRequestFromGrant('client_credentials');
+    }
+
     private function generateRsaPrivateJwk(string $kid): array
     {
         $resource = openssl_pkey_new([
