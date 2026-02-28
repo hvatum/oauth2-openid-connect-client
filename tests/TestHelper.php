@@ -153,6 +153,26 @@ final class TestHelper
         return $path;
     }
 
+    /**
+     * Build a raw JWT with an arbitrary header (for algorithm confusion tests).
+     * The signature is faked — this is for testing header validation, not crypto.
+     */
+    public static function buildRawJwt(array $header, array $payload): string
+    {
+        $encode = fn(array $data) => rtrim(strtr(
+            base64_encode(json_encode($data, JSON_UNESCAPED_SLASHES)),
+            '+/',
+            '-_'
+        ), '=');
+
+        $h = $encode($header);
+        $p = $encode($payload);
+        // Fake signature (non-empty so it looks like a real compact JWT)
+        $s = rtrim(strtr(base64_encode('fake-signature'), '+/', '-_'), '=');
+
+        return "{$h}.{$p}.{$s}";
+    }
+
     public static function tokenErrorResponse(int $status, string $error, string $description = ''): Response
     {
         $body = ['error' => $error];

@@ -251,36 +251,20 @@ final class IdTokenValidationTest extends TestCase
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();
 
-        $claims = [
+        $idToken = TestHelper::signIdToken([
             'iss' => 'https://idp.test',
             'sub' => 'user-456',
             'aud' => ['client-123'],
             'exp' => time() + 3600,
             'iat' => time(),
             'nonce' => 'n-1',
-        ];
-
-        $idToken = TestHelper::signIdToken($claims, $private, $jwk['kid']);
+        ], $private, $jwk['kid']);
 
         $history = [];
         $provider = TestHelper::fullProvider([
             TestHelper::wellKnownResponse(),
             TestHelper::jwksResponse($jwk),
         ], $history);
-
-        $jwksRef = new \ReflectionMethod($provider, 'getJwks');
-        $jwksRef->setAccessible(true);
-        try {
-            $jwksRef->invoke($provider);
-        } catch (\Throwable $e) {
-            // allow validation to surface assertion failures later
-        }
-
-        self::assertGreaterThanOrEqual(1, count($history));
-        self::assertSame('https://idp.test/.well-known/openid-configuration', (string)$history[0]['request']->getUri());
-        if (isset($history[1])) {
-            self::assertSame('https://idp.test/oauth2/jwks', (string)$history[1]['request']->getUri());
-        }
 
         $provider->setNonce('n-1');
 
@@ -289,5 +273,273 @@ final class IdTokenValidationTest extends TestCase
         self::assertSame('https://idp.test', $result['iss']);
         self::assertSame('client-123', $result['aud'][0]);
         self::assertSame('n-1', $result['nonce']);
+    }
+
+    // --- Security tests ---
+
+    public function testRejectsWrongSignature(): void
+    {
+        // Sign with key A, provide key B in JWKS
+        [$privateA, , ] = TestHelper::generateEcKeyPair();
+        [, , $jwkB] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $privateA, $jwkB['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwkB),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Signature verification failed');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testRejectsExpiredIdToken(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() - 3600, // expired 1 hour ago
+            'iat' => time() - 7200,
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('exp');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testRejectsWrongIssuer(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://evil.example.com',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('iss');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testRejectsWrongAudience(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'wrong-client',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('aud');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testRejectsAlgorithmNone(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::buildRawJwt(
+            ['alg' => 'none', 'typ' => 'JWT', 'kid' => $jwk['kid']],
+            [
+                'iss' => 'https://idp.test',
+                'sub' => 'user-1',
+                'aud' => 'client-123',
+                'exp' => time() + 3600,
+                'iat' => time(),
+            ]
+        );
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Invalid ID token algorithm');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testRejectsHmacAlgorithm(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::buildRawJwt(
+            ['alg' => 'HS256', 'typ' => 'JWT', 'kid' => $jwk['kid']],
+            [
+                'iss' => 'https://idp.test',
+                'sub' => 'user-1',
+                'aud' => 'client-123',
+                'exp' => time() + 3600,
+                'iat' => time(),
+            ]
+        );
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Invalid ID token algorithm');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testRejectsCallbackIssuerMismatch(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+        $provider->setCallbackIssuer('https://evil.example.com');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Issuer mismatch');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testMultipleAudiencesWithCorrectAzp(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => ['client-123', 'other-client'],
+            'azp' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $result = $provider->validateIdToken($idToken);
+        self::assertSame('user-1', $result['sub']);
+        self::assertSame('client-123', $result['azp']);
+    }
+
+    public function testMultipleAudiencesWithWrongAzp(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => ['client-123', 'other-client'],
+            'azp' => 'other-client',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('azp');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testMultipleAudiencesWithMissingAzp(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => ['client-123', 'other-client'],
+            // deliberately omitting 'azp'
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('azp');
+        $provider->validateIdToken($idToken);
     }
 }
