@@ -319,6 +319,22 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getAccessToken('authorization_code', ['code' => 'expired-code']);
     }
 
+    public function testDiscoveryRejectsNonHttpsWellKnownUrl(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('HTTPS');
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([], $history);
+
+        new \Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider([
+            'clientId' => 'test',
+            'issuer' => 'http://insecure.example.com',
+        ], [
+            'httpClient' => $httpClient,
+        ]);
+    }
+
     public function testWellKnownUrlOverride(): void
     {
         $history = [];
