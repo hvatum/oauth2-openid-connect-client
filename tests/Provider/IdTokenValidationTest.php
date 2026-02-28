@@ -293,8 +293,10 @@ final class IdTokenValidationTest extends TestCase
         ], $privateA, $jwkB['kid']);
 
         $history = [];
+        // Two JWKS responses: first attempt fails, retry with fresh JWKS also fails
         $provider = TestHelper::fullProvider([
             TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwkB),
             TestHelper::jwksResponse($jwkB),
         ], $history);
 

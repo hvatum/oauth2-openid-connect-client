@@ -774,7 +774,11 @@ class OpenIDConnectProvider extends AbstractProvider
             $jwkSet = JWKSet::createFromKeyData($this->getJwks());
 
             if (!$jwsVerifier->verifyWithKeySet($jws, $jwkSet, 0)) {
-                throw new \RuntimeException('Signature verification failed');
+                // Retry once with fresh JWKS in case the key set rotated recently.
+                $jwkSet = JWKSet::createFromKeyData($this->getJwks(true));
+                if (!$jwsVerifier->verifyWithKeySet($jws, $jwkSet, 0)) {
+                    throw new \RuntimeException('Signature verification failed');
+                }
             }
 
             $decoded = json_decode($jws->getPayload(), true);
@@ -870,9 +874,9 @@ class OpenIDConnectProvider extends AbstractProvider
      * @return array
      * @throws IdentityProviderException
      */
-    protected function getJwks(): array
+    protected function getJwks(bool $forceRefresh = false): array
     {
-        if ($this->jwksCache !== null && $this->jwksCacheTime !== null) {
+        if (!$forceRefresh && $this->jwksCache !== null && $this->jwksCacheTime !== null) {
             if ((time() - $this->jwksCacheTime) < static::JWKS_CACHE_TTL) {
                 $this->logger->debug('Using cached JWKS', [
                     'cache_age_seconds' => time() - $this->jwksCacheTime,
