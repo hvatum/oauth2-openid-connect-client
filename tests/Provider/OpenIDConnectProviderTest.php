@@ -463,6 +463,20 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getAuthorizationUrl();
     }
 
+    public function testParUnexpectedExceptionIsWrapped(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            new \RuntimeException('network down'),
+        ], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('PAR request failed');
+
+        $provider->getAuthorizationUrl();
+    }
+
     public function testParMissingRequestUriThrowsException(): void
     {
         $history = [];
