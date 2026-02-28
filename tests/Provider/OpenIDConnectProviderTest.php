@@ -592,6 +592,110 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertFileDoesNotExist($cacheFile);
     }
 
+    public function testSaveWellKnownToCacheWritesFileWithCorrectPermissions(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $cacheDir = sys_get_temp_dir() . '/oauth2-oidc-test-save-' . uniqid();
+        $cacheFile = $cacheDir . '/wellknown_test.json';
+
+        $saveToCache = \Closure::bind(
+            fn(string $file, array $config) => $this->saveWellKnownToCache($file, $config),
+            $provider,
+            $provider
+        );
+
+        $config = ['issuer' => 'https://idp.test', 'token_endpoint' => 'https://idp.test/token'];
+        $saveToCache($cacheFile, $config);
+
+        self::assertFileExists($cacheFile);
+        self::assertSame($config, json_decode(file_get_contents($cacheFile), true));
+        self::assertSame(0600, fileperms($cacheFile) & 0777);
+
+        // Cleanup
+        @unlink($cacheFile);
+        @rmdir($cacheDir);
+    }
+
+    public function testSetCacheDirIsUsedForCachePath(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $customDir = '/tmp/custom-cache-dir-' . uniqid();
+        $provider->setCacheDir($customDir);
+
+        $getCacheFile = \Closure::bind(
+            fn(string $url) => $this->getWellKnownCacheFile($url),
+            $provider,
+            $provider
+        );
+
+        $file = $getCacheFile('https://idp.test/.well-known/openid-configuration');
+        self::assertStringStartsWith($customDir . '/', $file);
+        self::assertStringContainsString('wellknown_', $file);
+    }
+
+    public function testGetCacheNamespaceReturnsHashedIdentifier(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $getNamespace = \Closure::bind(
+            fn() => $this->getCacheNamespace(),
+            $provider,
+            $provider
+        );
+
+        $namespace = $getNamespace();
+        // Should be either a sha256 hash or 'default'
+        self::assertMatchesRegularExpression('/^([a-f0-9]{64}|default)$/', $namespace);
+    }
+
+    public function testLoadWellKnownFromCacheReturnsNullForMissingFile(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $loadFromCache = \Closure::bind(
+            fn(string $file) => $this->loadWellKnownFromCache($file),
+            $provider,
+            $provider
+        );
+
+        self::assertNull($loadFromCache('/tmp/nonexistent-' . uniqid() . '.json'));
+    }
+
+    public function testLoadWellKnownFromCacheReturnsValidConfig(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $config = ['issuer' => 'https://idp.test', 'authorization_endpoint' => 'https://idp.test/auth'];
+        $cacheFile = tempnam(sys_get_temp_dir(), 'wk_valid_');
+        file_put_contents($cacheFile, json_encode($config));
+
+        $loadFromCache = \Closure::bind(
+            fn(string $file) => $this->loadWellKnownFromCache($file),
+            $provider,
+            $provider
+        );
+
+        self::assertSame($config, $loadFromCache($cacheFile));
+        @unlink($cacheFile);
+    }
+
     public function testGetJwksThrowsOnHttpError(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();
