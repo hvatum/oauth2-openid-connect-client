@@ -281,4 +281,109 @@ final class DPopTraitTest extends TestCase
         self::assertSame('server-nonce', $provider->getDPopNonce());
         self::assertSame('server-nonce', $response->getHeaderLine('DPoP-Nonce'));
     }
+
+    public function testDpopDoesNotRetryOnNon400Or401Status(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(403, ['DPoP-Nonce' => 'nonce-1'], json_encode([
+                'error' => 'use_dpop_nonce',
+            ])),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $response = $provider->makeDPopRequest('GET', 'https://api.example.com/resource', 'token-123');
+
+        // Should not retry — 403 is not retryable
+        self::assertSame(403, $response->getStatusCode());
+        self::assertCount(2, $history);
+    }
+
+    public function testDpopDoesNotRetryWhenNonceUnchanged(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(400, ['DPoP-Nonce' => 'same-nonce'], json_encode([
+                'error' => 'use_dpop_nonce',
+            ])),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        // Pre-set the nonce to the same value the server returns
+        $provider->setDPopNonce('same-nonce');
+
+        $response = $provider->makeDPopRequest('GET', 'https://api.example.com/resource', 'token-123');
+
+        // Should not retry — nonce hasn't changed
+        self::assertSame(400, $response->getStatusCode());
+        self::assertCount(2, $history);
+    }
+
+    public function testDpopRequestIncludesBodyAndHeaders(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            new Response(200, [], '{"ok":true}'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->makeDPopRequest('POST', 'https://api.example.com/resource', 'token-123', [
+            'body' => '{"key":"value"}',
+            'headers' => ['Content-Type' => 'application/json'],
+        ]);
+
+        $apiRequest = $history[1]['request'];
+        self::assertSame('POST', $apiRequest->getMethod());
+        self::assertSame('application/json', $apiRequest->getHeaderLine('Content-Type'));
+        self::assertSame('{"key":"value"}', (string) $apiRequest->getBody());
+        self::assertStringStartsWith('DPoP ', $apiRequest->getHeaderLine('Authorization'));
+    }
+
+    public function testIsUseDpopNonceErrorDetectsWwwAuthenticateVariants(): void
+    {
+        [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            // Quoted error value with realm in WWW-Authenticate
+            new Response(401, [
+                'DPoP-Nonce' => 'nonce-a',
+                'WWW-Authenticate' => 'DPoP realm="test", error="use_dpop_nonce"',
+            ], '{}'),
+            new Response(200, ['DPoP-Nonce' => 'nonce-a'], '{"ok":true}'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $response = $provider->makeDPopRequest('GET', 'https://api.example.com/resource', 'token-123');
+
+        // Should have retried (WWW-Authenticate with quoted error value detected)
+        self::assertSame(200, $response->getStatusCode());
+        self::assertCount(3, $history);
+    }
 }
