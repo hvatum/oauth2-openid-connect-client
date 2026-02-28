@@ -286,6 +286,23 @@ final class OpenIDConnectProviderTest extends TestCase
         ], $history);
     }
 
+    public function testDiscoveryRejectsNonHttpsIssuerMetadata(): void
+    {
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('issuer must use https URL');
+
+        $history = [];
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'issuer' => 'http://idp.test',
+            ]),
+        ], $history, [
+            // Keep discovery fetch itself on HTTPS; only metadata issuer is HTTP.
+            'issuer' => 'http://idp.test',
+            'wellKnownUrl' => 'https://idp.test/.well-known/openid-configuration',
+        ]);
+    }
+
     public function testWellKnownUrlOverride(): void
     {
         $history = [];

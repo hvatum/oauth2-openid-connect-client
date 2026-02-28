@@ -130,6 +130,9 @@ trait WellKnownConfigTrait
             }
         }
 
+        // OIDC Discovery / RFC 8414: issuer identifier is an https URL.
+        $this->assertHttpsUrl('issuer', $config['issuer']);
+
         // Endpoint URLs in discovery metadata must use HTTPS.
         $endpointFields = [
             'authorization_endpoint',
