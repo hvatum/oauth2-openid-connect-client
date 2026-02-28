@@ -511,4 +511,70 @@ final class OpenIDConnectProviderTest extends TestCase
             (string) $history[0]['request']->getUri()
         );
     }
+
+    public function testWellKnownCacheEntryValidationHelper(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $isFresh = \Closure::bind(
+            fn($entry) => $this->isFreshInMemoryWellKnownCacheEntry($entry),
+            $provider,
+            $provider
+        );
+
+        self::assertTrue($isFresh([
+            'config' => ['issuer' => 'https://idp.test'],
+            'loaded_at' => time(),
+        ]));
+        self::assertFalse($isFresh('invalid'));
+        self::assertFalse($isFresh(['config' => ['issuer' => 'x']]));
+        self::assertFalse($isFresh([
+            'config' => ['issuer' => 'https://idp.test'],
+            'loaded_at' => time() - 90000,
+        ]));
+    }
+
+    public function testLoadWellKnownFromCacheRejectsInvalidJsonAndDeletesFile(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $cacheFile = tempnam(sys_get_temp_dir(), 'wk_invalid_');
+        file_put_contents($cacheFile, '{not-json');
+
+        $loadFromCache = \Closure::bind(
+            fn(string $file) => $this->loadWellKnownFromCache($file),
+            $provider,
+            $provider
+        );
+
+        self::assertNull($loadFromCache($cacheFile));
+        self::assertFileDoesNotExist($cacheFile);
+    }
+
+    public function testLoadWellKnownFromCacheRejectsExpiredFileAndDeletesFile(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $cacheFile = tempnam(sys_get_temp_dir(), 'wk_expired_');
+        file_put_contents($cacheFile, json_encode(['issuer' => 'https://idp.test']));
+        touch($cacheFile, time() - 90000);
+
+        $loadFromCache = \Closure::bind(
+            fn(string $file) => $this->loadWellKnownFromCache($file),
+            $provider,
+            $provider
+        );
+
+        self::assertNull($loadFromCache($cacheFile));
+        self::assertFileDoesNotExist($cacheFile);
+    }
 }
