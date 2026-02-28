@@ -11,7 +11,6 @@ use League\OAuth2\Client\Tool\BearerAuthorizationTrait;
 use Psr\Http\Message\ResponseInterface;
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWKSet;
-use Jose\Component\Core\Util\Base64UrlSafe;
 use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\Algorithm\RS256;
 use Jose\Component\Signature\Algorithm\PS256;
@@ -23,6 +22,7 @@ use Jose\Component\Checker\ExpirationTimeChecker;
 use Jose\Component\Checker\InvalidClaimException;
 use Jose\Component\Checker\IssuerChecker;
 use Jose\Component\Checker\IssuedAtChecker;
+use Jose\Component\Checker\MissingMandatoryClaimException;
 use Jose\Component\Checker\NotBeforeChecker;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -708,22 +708,20 @@ class OpenIDConnectProvider extends AbstractProvider
             throw new IdentityProviderException('JWKS URL not available for ID token validation', 0, null);
         }
 
-        // Parse header to enforce expected algorithm
-        $parts = explode('.', $idToken);
-        if (count($parts) !== 3) {
+        // Parse with serializer (avoid hand-rolled JWT decoding).
+        $serializer = new CompactSerializer();
+        try {
+            $jws = $serializer->unserialize($idToken);
+            $header = $jws->getSignature(0)->getProtectedHeader();
+        } catch (\Throwable $e) {
             throw new IdentityProviderException('Invalid ID token format', 0, null);
-        }
-
-        $header = json_decode(Base64UrlSafe::decode($parts[0]), true);
-        if (!is_array($header)) {
-            throw new IdentityProviderException('Invalid ID token header', 0, null);
         }
 
         // Whitelist of allowed algorithms (prevent algorithm confusion attacks)
         $allowedAlgorithms = ['ES256', 'RS256', 'PS256'];
-        $tokenAlg = $header['alg'] ?? '';
+        $tokenAlg = $header['alg'] ?? null;
 
-        if (!in_array($tokenAlg, $allowedAlgorithms, true)) {
+        if (!is_string($tokenAlg) || !in_array($tokenAlg, $allowedAlgorithms, true)) {
             $this->logger->warning('ID token uses disallowed algorithm', [
                 'algorithm' => $tokenAlg,
                 'allowed' => $allowedAlgorithms,
@@ -743,9 +741,6 @@ class OpenIDConnectProvider extends AbstractProvider
                 new PS256(),
             ]);
             $jwsVerifier = new JWSVerifier($algorithmManager);
-            $serializer = new CompactSerializer();
-
-            $jws = $serializer->unserialize($idToken);
             $jwkSet = JWKSet::createFromKeyData($this->getJwks());
 
             if (!$jwsVerifier->verifyWithKeySet($jws, $jwkSet, 0)) {
