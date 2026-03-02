@@ -55,6 +55,8 @@ class OpenIDConnectProvider extends AbstractProvider
     use ClientAssertionTrait;
     use DPopTrait;
 
+    public const ACCESS_TOKEN_RESOURCE_OWNER_ID = 'sub';
+
     /**
      * Scope delimiter (space-separated as per OAuth 2.0 spec)
      */
