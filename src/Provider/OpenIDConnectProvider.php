@@ -97,6 +97,7 @@ class OpenIDConnectProvider extends AbstractProvider
     protected ?string $userInfoUrl = null;
     protected ?string $parUrl = null;
     protected ?string $revocationUrl = null;
+    protected ?string $endSessionUrl = null;
     protected ?string $jwksUrl = null;
     protected ?string $issuerUrl = null;
 
@@ -682,6 +683,17 @@ class OpenIDConnectProvider extends AbstractProvider
     public function getIssuerUrl(): ?string
     {
         return $this->issuerUrl;
+    }
+
+    /**
+     * Get the end session endpoint from well-known configuration
+     * (RP-Initiated Logout 1.0)
+     *
+     * @return string|null
+     */
+    public function getEndSessionEndpoint(): ?string
+    {
+        return $this->endSessionUrl;
     }
 
     /**

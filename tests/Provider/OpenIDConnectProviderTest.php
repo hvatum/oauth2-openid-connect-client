@@ -43,6 +43,28 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertSame('https://idp.test', $provider->getIssuerUrl());
     }
 
+    public function testEndSessionEndpointIsNullWhenNotInDiscovery(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        self::assertNull($provider->getEndSessionEndpoint());
+    }
+
+    public function testEndSessionEndpointFromDiscovery(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'end_session_endpoint' => 'https://idp.test/oauth2/logout',
+            ]),
+        ], $history);
+
+        self::assertSame('https://idp.test/oauth2/logout', $provider->getEndSessionEndpoint());
+    }
+
     public function testClientAssertionIsOptional(): void
     {
         $history = [];
