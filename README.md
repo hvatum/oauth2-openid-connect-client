@@ -10,6 +10,11 @@ A generic OpenID Connect provider for [The PHP League's OAuth2 Client](https://g
 - **ID Token validation** — Signature verification, claim validation, nonce checking
 - **RFC 9207** — Authorization Server Issuer Identification (mix-up attack protection)
 
+## Disclaimer
+
+OAuth2 and its related standards are complex topics to understand and to get right. This library strives to be correct
+but mistakes can be made. There is NO WARRANTY, use at your own risk, and please leave a bug report or a pull request if you find something that seems off.
+
 ## Requirements
 
 - PHP 8.2 or later
@@ -30,6 +35,7 @@ The simplest setup — just point to the issuer:
 use Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider;
 
 $provider = new OpenIDConnectProvider([
+    
     'clientId'     => 'your-client-id',
     'clientSecret' => 'your-client-secret',
     'redirectUri'  => 'https://your-app.example/callback',
