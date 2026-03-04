@@ -1000,6 +1000,41 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertSame('token-after-retry', $token->getToken());
     }
 
+    public function testResourceOwnerMergesIdTokenClaimsWithUserinfo(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'email' => 'from-idtoken@example.com',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            // UserInfo response with matching sub
+            new Response(200, ['Content-Type' => 'application/json'], json_encode([
+                'sub' => 'user-123',
+                'name' => 'Alice',
+            ])),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+        $owner = $provider->getResourceOwner($token);
+
+        // UserInfo fields take precedence, ID token identity claims are merged
+        self::assertSame('user-123', $owner->getId());
+        self::assertSame('Alice', $owner->toArray()['name']);
+        // ID token claims like email should be merged in
+        self::assertSame('from-idtoken@example.com', $owner->toArray()['email']);
+        // Transport claims (nonce, at_hash, etc.) should NOT be present
+        self::assertArrayNotHasKey('nonce', $owner->toArray());
+    }
 
     public function testWellKnownInMemoryCacheIsUsedOnSecondConstruction(): void
     {
