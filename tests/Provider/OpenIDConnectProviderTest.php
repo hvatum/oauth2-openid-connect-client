@@ -1210,4 +1210,113 @@ final class OpenIDConnectProviderTest extends TestCase
             ]),
         ], $history);
     }
+
+    public function testFetchResourceOwnerDetailsThrowsOnNonJsonResponse(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            // UserInfo endpoint returns non-JSON
+            new Response(200, ['Content-Type' => 'text/html'], '<html>Not JSON</html>'),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('Expected JSON');
+
+        $provider->getResourceOwner($token);
+    }
+
+    public function testGetIdTokenReturnsNullWhenNoTokenReceived(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            // Token response without id_token
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $provider->getAccessToken('client_credentials');
+
+        self::assertNull($provider->getIdToken());
+    }
+
+    public function testDefaultCacheDirIsUsedWhenNoneConfigured(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        // Clear custom cacheDir to test default path
+        $provider->setCacheDir('');
+
+        // Use reflection to null out cacheDir and test getWellKnownCacheDir default
+        $setCacheDir = \Closure::bind(
+            function () { $this->cacheDir = null; },
+            $provider,
+            $provider
+        );
+        $setCacheDir();
+
+        $getCacheDir = \Closure::bind(
+            fn() => $this->getWellKnownCacheDir(),
+            $provider,
+            $provider
+        );
+
+        $dir = $getCacheDir();
+        self::assertStringStartsWith(sys_get_temp_dir() . '/oauth2-oidc/', $dir);
+    }
+
+    public function testUnsupportedPemKeyTypeThrowsError(): void
+    {
+        // Generate a DSA-like key that will have an unsupported kty — use an OKP (Ed25519)
+        // Instead, we can test with a symmetric key PEM which isn't EC or RSA
+        // The simplest approach: provide a valid EC PEM but mock the kty check
+        // Actually, loadJwkFromPem only rejects non-EC/non-RSA kty values.
+        // OKP keys from JWKFactory would produce kty=OKP which is unsupported.
+        // Let's use sodium to generate an Ed25519 key if available, otherwise skip.
+        if (!function_exists('sodium_crypto_sign_keypair')) {
+            self::markTestSkipped('sodium extension required');
+        }
+
+        $keypair = sodium_crypto_sign_keypair();
+        $secret = sodium_crypto_sign_secretkey($keypair);
+
+        // Ed25519 private key in PKCS#8 PEM format
+        // The DER encoding for Ed25519 private key wraps the 32-byte seed
+        $seed = substr($secret, 0, 32);
+        $der = hex2bin('302e020100300506032b6570042204') . bin2hex($seed);
+        // Actually, let's build proper PKCS#8 DER
+        $derBytes = "\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x70\x04\x22\x04\x20" . $seed;
+        $pem = "-----BEGIN PRIVATE KEY-----\n" . chunk_split(base64_encode($derBytes), 64, "\n") . "-----END PRIVATE KEY-----\n";
+
+        $pemPath = TestHelper::createTempKeyFile($pem);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKeyPath' => $pemPath,
+            'keyId' => 'ed25519-test',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unsupported key type in PEM');
+
+        $provider->debugAccessTokenRequestFromGrant('client_credentials');
+    }
 }
