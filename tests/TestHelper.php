@@ -37,6 +37,7 @@ final class TestHelper
             'userinfo_endpoint' => 'https://idp.test/oauth2/userinfo',
             'jwks_uri' => 'https://idp.test/oauth2/jwks',
             'pushed_authorization_request_endpoint' => 'https://idp.test/oauth2/par',
+            'id_token_signing_alg_values_supported' => ['ES256', 'RS256', 'PS256'],
         ], $overrides);
 
         return new Response(200, ['Content-Type' => 'application/json'], json_encode($body));

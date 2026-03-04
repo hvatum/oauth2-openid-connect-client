@@ -118,6 +118,46 @@ class OpenIDConnectProvider extends AbstractProvider
     protected bool $issuerResponseParameterSupported = false;
 
     /**
+     * Algorithms the server supports for signing ID tokens.
+     * REQUIRED per OIDC Discovery §3; defaults to ['RS256'] if absent.
+     * @var array<string>
+     */
+    protected array $idTokenSigningAlgValuesSupported = ['RS256'];
+
+    /**
+     * Algorithms the server supports for token endpoint auth signing.
+     * OPTIONAL per OIDC Discovery; null means not advertised.
+     * @var array<string>|null
+     */
+    protected ?array $tokenEndpointAuthSigningAlgValuesSupported = null;
+
+    /**
+     * Algorithms the server supports for DPoP proof signing (RFC 9449).
+     * OPTIONAL; null means not advertised.
+     * @var array<string>|null
+     */
+    protected ?array $dpopSigningAlgValuesSupported = null;
+
+    /**
+     * Authentication methods the server supports at the token endpoint.
+     * OPTIONAL per OIDC Discovery; null means not advertised.
+     * @var array<string>|null
+     */
+    protected ?array $tokenEndpointAuthMethodsSupported = null;
+
+    /**
+     * Code challenge methods the server supports for PKCE (RFC 7636).
+     * OPTIONAL; null means not advertised.
+     * @var array<string>|null
+     */
+    protected ?array $codeChallengeMethodsSupported = null;
+
+    /**
+     * Whether the server requires Pushed Authorization Requests (RFC 9126).
+     */
+    protected bool $requirePushedAuthorizationRequests = false;
+
+    /**
      * Whether to enforce RFC 9207 issuer identification validation.
      * When true (default), if the AS advertises support, callbacks missing
      * the iss parameter will be rejected.

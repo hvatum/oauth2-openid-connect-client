@@ -219,6 +219,14 @@ trait WellKnownConfigTrait
         $this->revocationUrl = $config['revocation_endpoint'] ?? null;
         $this->endSessionUrl = $config['end_session_endpoint'] ?? null;
         $this->issuerResponseParameterSupported = !empty($config['authorization_response_iss_parameter_supported']);
+
+        // Algorithm and method metadata from discovery
+        $this->idTokenSigningAlgValuesSupported = $config['id_token_signing_alg_values_supported'] ?? ['RS256'];
+        $this->tokenEndpointAuthSigningAlgValuesSupported = $config['token_endpoint_auth_signing_alg_values_supported'] ?? null;
+        $this->dpopSigningAlgValuesSupported = $config['dpop_signing_alg_values_supported'] ?? null;
+        $this->tokenEndpointAuthMethodsSupported = $config['token_endpoint_auth_methods_supported'] ?? null;
+        $this->codeChallengeMethodsSupported = $config['code_challenge_methods_supported'] ?? null;
+        $this->requirePushedAuthorizationRequests = !empty($config['require_pushed_authorization_requests']);
     }
 
     /**
