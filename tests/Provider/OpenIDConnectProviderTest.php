@@ -931,6 +931,75 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertFalse($isDPopNonceError($e4));
     }
 
+    public function testExtractDPopNonceFromTokenResponse(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            // Token response with DPoP-Nonce header
+            new Response(200, [
+                'Content-Type' => 'application/json',
+                'DPoP-Nonce' => 'server-token-nonce',
+            ], json_encode([
+                'access_token' => 'token123',
+                'token_type' => 'DPoP',
+                'expires_in' => 3600,
+            ])),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $provider->getAccessToken('authorization_code', ['code' => 'abc']);
+
+        // The DPoP nonce should have been extracted from the token response
+        self::assertSame('server-token-nonce', $provider->getDPopNonce());
+    }
+
+    public function testDPopNonceRetryOnTokenEndpoint(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            // First token request: 400 with use_dpop_nonce
+            new Response(400, [
+                'Content-Type' => 'application/json',
+                'DPoP-Nonce' => 'required-nonce',
+            ], json_encode([
+                'error' => 'use_dpop_nonce',
+                'error_description' => 'DPoP nonce required',
+            ])),
+            // Retry: success
+            new Response(200, [
+                'Content-Type' => 'application/json',
+                'DPoP-Nonce' => 'required-nonce',
+            ], json_encode([
+                'access_token' => 'token-after-retry',
+                'token_type' => 'DPoP',
+                'expires_in' => 3600,
+            ])),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $token = $provider->getAccessToken('authorization_code', ['code' => 'abc']);
+
+        // Should have retried: well-known + first token request + retry
+        self::assertCount(3, $history);
+        self::assertSame('token-after-retry', $token->getToken());
+    }
+
 
     public function testDiscoveryRejectsNonStringEndpointValue(): void
     {
