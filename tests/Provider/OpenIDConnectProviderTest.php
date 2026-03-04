@@ -1036,6 +1036,39 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertArrayNotHasKey('nonce', $owner->toArray());
     }
 
+    public function testResourceOwnerUserinfoOverridesIdTokenClaims(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'email' => 'old@example.com',
+            'name' => 'ID Token Name',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            new Response(200, ['Content-Type' => 'application/json'], json_encode([
+                'sub' => 'user-123',
+                'email' => 'updated@example.com',
+                'name' => 'UserInfo Name',
+            ])),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+        $owner = $provider->getResourceOwner($token);
+
+        // UserInfo values must take precedence over ID token values
+        self::assertSame('updated@example.com', $owner->toArray()['email']);
+        self::assertSame('UserInfo Name', $owner->toArray()['name']);
+    }
+
     public function testWellKnownInMemoryCacheIsUsedOnSecondConstruction(): void
     {
         // First provider loads from network (basicProvider clears cache first)
