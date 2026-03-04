@@ -12,8 +12,14 @@ use Psr\Http\Message\ResponseInterface;
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWKSet;
 use Jose\Component\Signature\Algorithm\ES256;
+use Jose\Component\Signature\Algorithm\ES384;
+use Jose\Component\Signature\Algorithm\ES512;
 use Jose\Component\Signature\Algorithm\RS256;
+use Jose\Component\Signature\Algorithm\RS384;
+use Jose\Component\Signature\Algorithm\RS512;
 use Jose\Component\Signature\Algorithm\PS256;
+use Jose\Component\Signature\Algorithm\PS384;
+use Jose\Component\Signature\Algorithm\PS512;
 use Jose\Component\Signature\JWSVerifier;
 use Jose\Component\Signature\Serializer\CompactSerializer;
 use Jose\Component\Checker\AudienceChecker;
@@ -832,7 +838,11 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         // Algorithms this library can verify (prevent algorithm confusion attacks)
-        $librarySupported = ['ES256', 'RS256', 'PS256'];
+        $librarySupported = [
+            'ES256', 'ES384', 'ES512',
+            'RS256', 'RS384', 'RS512',
+            'PS256', 'PS384', 'PS512',
+        ];
 
         // Intersect with what the server advertises (from discovery)
         $allowedAlgorithms = array_values(array_intersect(
@@ -867,9 +877,9 @@ class OpenIDConnectProvider extends AbstractProvider
         try {
             // Build AlgorithmManager with only mutually supported algorithms
             $algorithmMap = [
-                'ES256' => ES256::class,
-                'RS256' => RS256::class,
-                'PS256' => PS256::class,
+                'ES256' => ES256::class, 'ES384' => ES384::class, 'ES512' => ES512::class,
+                'RS256' => RS256::class, 'RS384' => RS384::class, 'RS512' => RS512::class,
+                'PS256' => PS256::class, 'PS384' => PS384::class, 'PS512' => PS512::class,
             ];
             $algorithms = [];
             foreach ($allowedAlgorithms as $alg) {

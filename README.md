@@ -101,7 +101,7 @@ $provider = new OpenIDConnectProvider([
 ]);
 ```
 
-Supports EC (ES256) and RSA (RS256, PS256) keys in both PEM and JWK formats.
+Supports EC (ES256/ES384/ES512) and RSA (RS256/RS384/RS512, PS256/PS384/PS512) keys in both PEM and JWK formats.
 
 ### DPoP Token Binding (RFC 9449)
 
@@ -130,7 +130,7 @@ ID tokens are automatically validated when fetching resource owner details. You 
 $claims = $provider->validateIdToken($idTokenJwt, $expectedNonce);
 ```
 
-Validates: signature (ES256/RS256/PS256), issuer, audience, expiration, nonce, and more.
+Validates: signature (ES256/384/512, RS256/384/512, PS256/384/512), issuer, audience, expiration, nonce, and more.
 
 ### Caching
 

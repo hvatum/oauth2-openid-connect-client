@@ -636,7 +636,7 @@ final class IdTokenValidationTest extends TestCase
         $history = [];
         $provider = TestHelper::fullProvider([
             TestHelper::wellKnownResponse([
-                'id_token_signing_alg_values_supported' => ['ES384', 'ES512'],
+                'id_token_signing_alg_values_supported' => ['EdDSA'],
             ]),
         ], $history);
 
