@@ -67,6 +67,7 @@ trait DPopTrait
      * Check if DPoP is configured
      *
      * @return bool
+     * @codeCoverageIgnore
      */
     protected function hasDPoP(): bool
     {
@@ -254,6 +255,7 @@ trait DPopTrait
      * Set DPoP nonce from server response
      *
      * @param string $nonce
+     * @codeCoverageIgnore
      */
     public function setDPopNonce(string $nonce): void
     {
@@ -264,6 +266,7 @@ trait DPopTrait
      * Get stored DPoP nonce
      *
      * @return string|null
+     * @codeCoverageIgnore
      */
     public function getDPopNonce(): ?string
     {

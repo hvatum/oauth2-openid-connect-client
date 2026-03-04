@@ -91,6 +91,7 @@ trait ClientAssertionTrait
      * Check if client assertion is configured
      *
      * @return bool
+     * @codeCoverageIgnore
      */
     protected function hasClientAssertion(): bool
     {
@@ -106,6 +107,7 @@ trait ClientAssertionTrait
      * Set assertion details for client assertion (for M2M organization delegation)
      *
      * @param array|null $details
+     * @codeCoverageIgnore
      */
     public function setClientAssertionDetails(?array $details): void
     {

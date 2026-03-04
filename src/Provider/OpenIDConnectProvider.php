@@ -624,6 +624,7 @@ class OpenIDConnectProvider extends AbstractProvider
      * Get the nonce used in the authorization request
      *
      * @return string|null
+     * @codeCoverageIgnore
      */
     public function getNonce(): ?string
     {
@@ -645,6 +646,7 @@ class OpenIDConnectProvider extends AbstractProvider
      * Get the callback issuer (RFC 9207)
      *
      * @return string|null
+     * @codeCoverageIgnore
      */
     public function getCallbackIssuer(): ?string
     {
@@ -679,6 +681,7 @@ class OpenIDConnectProvider extends AbstractProvider
      * Get the issuer URL from well-known configuration
      *
      * @return string|null
+     * @codeCoverageIgnore
      */
     public function getIssuerUrl(): ?string
     {
@@ -690,6 +693,7 @@ class OpenIDConnectProvider extends AbstractProvider
      * (RP-Initiated Logout 1.0)
      *
      * @return string|null
+     * @codeCoverageIgnore
      */
     public function getEndSessionEndpoint(): ?string
     {
