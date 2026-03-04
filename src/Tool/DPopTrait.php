@@ -94,6 +94,18 @@ trait DPopTrait
             throw new \RuntimeException('DPoP not configured');
         }
 
+        // Validate ES256 against server's advertised DPoP algorithms (if available)
+        if ($this->dpopSigningAlgValuesSupported !== null
+            && !in_array('ES256', $this->dpopSigningAlgValuesSupported, true)
+        ) {
+            throw new \RuntimeException(
+                sprintf(
+                    'DPoP algorithm ES256 is not supported by the authorization server. Supported: %s',
+                    implode(', ', $this->dpopSigningAlgValuesSupported)
+                )
+            );
+        }
+
         $privateJwk = $this->getDPopPrivateJwk();
         $publicKeyJwk = $this->getDPopPublicKeyJwk();
         $now = time();

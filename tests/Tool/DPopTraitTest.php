@@ -386,4 +386,102 @@ final class DPopTraitTest extends TestCase
         self::assertSame(200, $response->getStatusCode());
         self::assertCount(3, $history);
     }
+
+    // ── dpop_signing_alg_values_supported tests ──
+
+    public function testDPopAcceptedWhenES256InServerList(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'dpop_signing_alg_values_supported' => ['ES256', 'PS256'],
+            ]),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->setPkceCode('test-verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $dpopHeader = $request->getHeaderLine('DPoP');
+        self::assertNotEmpty($dpopHeader);
+    }
+
+    public function testDPopAcceptedWhenServerListsAll9(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'dpop_signing_alg_values_supported' => [
+                    'ES256', 'ES384', 'ES512', 'RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512',
+                ],
+            ]),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->setPkceCode('test-verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $dpopHeader = $request->getHeaderLine('DPoP');
+        self::assertNotEmpty($dpopHeader);
+    }
+
+    public function testDPopRejectedWhenES256NotInServerList(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'dpop_signing_alg_values_supported' => ['PS256', 'RS256'],
+            ]),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->setPkceCode('test-verifier');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('DPoP algorithm ES256 is not supported by the authorization server');
+        $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+    }
+
+    public function testDPopSkipsValidationWhenNotAdvertised(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        // Default wellKnownResponse has no dpop_signing_alg_values_supported
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $provider->setPkceCode('test-verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $dpopHeader = $request->getHeaderLine('DPoP');
+        self::assertNotEmpty($dpopHeader);
+    }
 }
