@@ -1050,6 +1050,13 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     protected function usePAR(): bool
     {
+        if ($this->requirePushedAuthorizationRequests && $this->parUrl === null) {
+            throw new \RuntimeException(
+                'The authorization server requires Pushed Authorization Requests (PAR) '
+                . 'but no pushed_authorization_request_endpoint was found in the discovery document'
+            );
+        }
+
         return $this->parUrl !== null;
     }
 }

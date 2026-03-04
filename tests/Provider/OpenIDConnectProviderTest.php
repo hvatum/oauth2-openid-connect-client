@@ -1452,4 +1452,79 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getAuthorizationUrl();
         self::assertCount(2, $history);
     }
+
+    // ── require_pushed_authorization_requests tests ──
+
+    public function testRequirePARUsesParWhenEndpointAvailable(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'require_pushed_authorization_requests' => true,
+            ]),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $url = $provider->getAuthorizationUrl();
+
+        // PAR request was sent (well-known + PAR = 2 requests)
+        self::assertCount(2, $history);
+
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+        self::assertArrayHasKey('request_uri', $params);
+    }
+
+    public function testRequirePARThrowsWhenNoEndpoint(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'require_pushed_authorization_requests' => true,
+                'pushed_authorization_request_endpoint' => null,
+            ]),
+        ], $history);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('requires Pushed Authorization Requests');
+        $provider->getAuthorizationUrl();
+    }
+
+    public function testPARUsedNormallyWhenNotRequired(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'require_pushed_authorization_requests' => false,
+            ]),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $url = $provider->getAuthorizationUrl();
+
+        // PAR is used because endpoint is available (even though not required)
+        self::assertCount(2, $history);
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+        self::assertArrayHasKey('request_uri', $params);
+    }
+
+    public function testPARNotUsedWhenNotRequiredAndNoEndpoint(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'require_pushed_authorization_requests' => false,
+                'pushed_authorization_request_endpoint' => null,
+            ]),
+        ], $history);
+
+        $url = $provider->getAuthorizationUrl();
+
+        // Only well-known fetch, no PAR
+        self::assertCount(1, $history);
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+        self::assertArrayNotHasKey('request_uri', $params);
+    }
 }
