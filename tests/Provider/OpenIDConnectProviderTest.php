@@ -1001,6 +1001,79 @@ final class OpenIDConnectProviderTest extends TestCase
     }
 
 
+    public function testWellKnownInMemoryCacheIsUsedOnSecondConstruction(): void
+    {
+        // First provider loads from network (basicProvider clears cache first)
+        $history1 = [];
+        $provider1 = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history1);
+        self::assertCount(1, $history1); // one HTTP call for well-known
+
+        // Second provider with same issuer — do NOT use basicProvider (it clears cache)
+        $history2 = [];
+        $httpClient2 = TestHelper::httpClient([], $history2);
+        $provider2 = new \Hvatum\OpenIDConnect\Client\Test\TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+            'cacheDir' => sys_get_temp_dir() . '/oauth2-oidc-tests-' . uniqid(),
+        ], [
+            'httpClient' => $httpClient2,
+        ]);
+
+        // No HTTP calls — served from in-memory cache
+        self::assertCount(0, $history2);
+        self::assertSame('https://idp.test', $provider2->getIssuerUrl());
+    }
+
+    public function testWellKnownFileCacheIsUsedWhenInMemoryCacheCleared(): void
+    {
+        $cacheDir = sys_get_temp_dir() . '/oauth2-oidc-filecache-' . uniqid();
+
+        // First provider loads from network and writes file cache
+        $history1 = [];
+        $provider1 = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'issuer' => 'https://filecache.test',
+                'authorization_endpoint' => 'https://filecache.test/auth',
+                'token_endpoint' => 'https://filecache.test/token',
+            ]),
+        ], $history1, [
+            'issuer' => 'https://filecache.test',
+            'wellKnownUrl' => 'https://filecache.test/.well-known/openid-configuration',
+            'cacheDir' => $cacheDir,
+        ]);
+        self::assertCount(1, $history1);
+
+        // Clear in-memory cache
+        \Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider::clearWellKnownCache();
+
+        // Second provider should use file cache
+        $history2 = [];
+        $httpClient2 = TestHelper::httpClient([], $history2);
+        $provider2 = new \Hvatum\OpenIDConnect\Client\Test\TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://filecache.test',
+            'wellKnownUrl' => 'https://filecache.test/.well-known/openid-configuration',
+            'cacheDir' => $cacheDir,
+        ], [
+            'httpClient' => $httpClient2,
+        ]);
+
+        // No HTTP calls — served from file cache
+        self::assertCount(0, $history2);
+        self::assertSame('https://filecache.test', $provider2->getIssuerUrl());
+
+        // Cleanup
+        array_map('unlink', glob($cacheDir . '/*'));
+        @rmdir($cacheDir);
+    }
+
+
     public function testDiscoveryRejectsNonStringEndpointValue(): void
     {
         $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
