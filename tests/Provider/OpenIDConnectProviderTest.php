@@ -1108,6 +1108,25 @@ final class OpenIDConnectProviderTest extends TestCase
         @rmdir($cacheDir);
     }
 
+    public function testRuntimeUserIdentifierReturnsNonNull(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $getIdentifier = \Closure::bind(
+            fn() => $this->getRuntimeUserIdentifier(),
+            $provider,
+            $provider
+        );
+
+        $identifier = $getIdentifier();
+
+        // On any system with posix or USER/USERNAME env, this should return a value
+        self::assertNotNull($identifier);
+        self::assertMatchesRegularExpression('/^(uid:\d+|user:.+)$/', $identifier);
+    }
 
     public function testDiscoveryRejectsNonStringEndpointValue(): void
     {
