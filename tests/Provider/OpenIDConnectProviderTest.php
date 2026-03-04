@@ -1395,4 +1395,61 @@ final class OpenIDConnectProviderTest extends TestCase
         $token = $provider->getAccessToken('client_credentials');
         self::assertNotNull($token);
     }
+
+    // ── code_challenge_methods_supported tests ──
+
+    public function testPkceAcceptsS256InServerList(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'code_challenge_methods_supported' => ['S256'],
+            ]),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $provider->getAuthorizationUrl();
+        // No exception = pass
+        self::assertCount(2, $history); // well-known + PAR
+    }
+
+    public function testPkceAcceptsS256WithMultipleMethods(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'code_challenge_methods_supported' => ['plain', 'S256'],
+            ]),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $provider->getAuthorizationUrl();
+        self::assertCount(2, $history);
+    }
+
+    public function testPkceRejectsWhenS256NotInServerList(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'code_challenge_methods_supported' => ['plain'],
+            ]),
+        ], $history);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('PKCE method S256 is not supported by the authorization server');
+        $provider->getAuthorizationUrl();
+    }
+
+    public function testPkceSkipsValidationWhenNotAdvertised(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $provider->getAuthorizationUrl();
+        self::assertCount(2, $history);
+    }
 }

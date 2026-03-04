@@ -506,6 +506,16 @@ class OpenIDConnectProvider extends AbstractProvider
         $this->nonce = $this->generateNonce();
         $params['nonce'] = $this->nonce;
 
+        // Validate PKCE method against server's advertised list
+        if ($this->codeChallengeMethodsSupported !== null
+            && !in_array('S256', $this->codeChallengeMethodsSupported, true)
+        ) {
+            throw new \RuntimeException(
+                'PKCE method S256 is not supported by the authorization server. Supported: '
+                . implode(', ', $this->codeChallengeMethodsSupported)
+            );
+        }
+
         // If PAR is enabled, push the authorization request
         if ($this->usePAR()) {
             $this->logger->debug('Using PAR (Pushed Authorization Request)');
