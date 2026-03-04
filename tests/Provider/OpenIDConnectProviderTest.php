@@ -795,4 +795,26 @@ final class OpenIDConnectProviderTest extends TestCase
 
         $provider->getIdToken();
     }
+
+    public function testGenerateNonceIsUniqueAcrossCalls(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse(),
+            TestHelper::parResponse(),
+        ], $history);
+
+        // Each getAuthorizationUrl() generates a fresh nonce
+        $provider->getAuthorizationUrl();
+        $nonce1 = $provider->getNonce();
+
+        $provider->getAuthorizationUrl();
+        $nonce2 = $provider->getNonce();
+
+        self::assertSame(64, strlen($nonce1));
+        self::assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $nonce1);
+        self::assertNotSame($nonce1, $nonce2);
+    }
+
 }
