@@ -817,4 +817,50 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertNotSame($nonce1, $nonce2);
     }
 
+    public function testAuthorizationWithoutPARReturnsFullParams(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'pushed_authorization_request_endpoint' => null,
+            ]),
+        ], $history);
+
+        $url = $provider->getAuthorizationUrl(['scope' => ['openid', 'profile']]);
+
+        // Without PAR, all params should be in the URL directly
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+
+        self::assertSame('client-123', $params['client_id']);
+        self::assertArrayHasKey('nonce', $params);
+        self::assertArrayHasKey('code_challenge', $params);
+        self::assertArrayNotHasKey('request_uri', $params);
+    }
+
+    public function testAuthorizationWithPAROnlyContainsClientIdAndRequestUri(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse('urn:ietf:params:oauth:request_uri:abc-123'),
+        ], $history);
+
+        $url = $provider->getAuthorizationUrl(['scope' => ['openid', 'profile']]);
+
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+
+        // With PAR, only client_id and request_uri should be in the URL
+        self::assertSame('client-123', $params['client_id']);
+        self::assertSame('urn:ietf:params:oauth:request_uri:abc-123', $params['request_uri']);
+
+        // Sensitive params must NOT leak into the URL — they were sent via PAR
+        self::assertArrayNotHasKey('scope', $params);
+        self::assertArrayNotHasKey('nonce', $params);
+        self::assertArrayNotHasKey('code_challenge', $params);
+        self::assertArrayNotHasKey('redirect_uri', $params);
+        self::assertArrayNotHasKey('client_secret', $params);
+    }
+
 }
