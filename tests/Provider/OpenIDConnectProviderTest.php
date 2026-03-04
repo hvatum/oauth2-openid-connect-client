@@ -1196,4 +1196,18 @@ final class OpenIDConnectProviderTest extends TestCase
             'httpClient' => $httpClient,
         ]);
     }
+
+    public function testDiscoveryRejectsMalformedIdTokenAlgMetadata(): void
+    {
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('id_token_signing_alg_values_supported must be an array of strings');
+
+        $history = [];
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                // Should be array<string>, but malformed OP responses can return a string.
+                'id_token_signing_alg_values_supported' => 'RS256',
+            ]),
+        ], $history);
+    }
 }

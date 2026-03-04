@@ -221,12 +221,88 @@ trait WellKnownConfigTrait
         $this->issuerResponseParameterSupported = !empty($config['authorization_response_iss_parameter_supported']);
 
         // Algorithm and method metadata from discovery
-        $this->idTokenSigningAlgValuesSupported = $config['id_token_signing_alg_values_supported'] ?? ['RS256'];
-        $this->tokenEndpointAuthSigningAlgValuesSupported = $config['token_endpoint_auth_signing_alg_values_supported'] ?? null;
-        $this->dpopSigningAlgValuesSupported = $config['dpop_signing_alg_values_supported'] ?? null;
-        $this->tokenEndpointAuthMethodsSupported = $config['token_endpoint_auth_methods_supported'] ?? null;
-        $this->codeChallengeMethodsSupported = $config['code_challenge_methods_supported'] ?? null;
+        $this->idTokenSigningAlgValuesSupported = $this->getStringArrayMetadataOrDefault(
+            $config,
+            'id_token_signing_alg_values_supported',
+            ['RS256']
+        );
+        $this->tokenEndpointAuthSigningAlgValuesSupported = $this->getNullableStringArrayMetadata(
+            $config,
+            'token_endpoint_auth_signing_alg_values_supported'
+        );
+        $this->dpopSigningAlgValuesSupported = $this->getNullableStringArrayMetadata(
+            $config,
+            'dpop_signing_alg_values_supported'
+        );
+        $this->tokenEndpointAuthMethodsSupported = $this->getNullableStringArrayMetadata(
+            $config,
+            'token_endpoint_auth_methods_supported'
+        );
+        $this->codeChallengeMethodsSupported = $this->getNullableStringArrayMetadata(
+            $config,
+            'code_challenge_methods_supported'
+        );
         $this->requirePushedAuthorizationRequests = !empty($config['require_pushed_authorization_requests']);
+    }
+
+    /**
+     * @param array<string,mixed> $config
+     * @param string $field
+     * @param array<string> $default
+     * @return array<string>
+     * @throws IdentityProviderException
+     */
+    protected function getStringArrayMetadataOrDefault(array $config, string $field, array $default): array
+    {
+        if (!array_key_exists($field, $config) || $config[$field] === null) {
+            return $default;
+        }
+
+        return $this->assertStringArrayMetadata($field, $config[$field]);
+    }
+
+    /**
+     * @param array<string,mixed> $config
+     * @param string $field
+     * @return array<string>|null
+     * @throws IdentityProviderException
+     */
+    protected function getNullableStringArrayMetadata(array $config, string $field): ?array
+    {
+        if (!array_key_exists($field, $config) || $config[$field] === null) {
+            return null;
+        }
+
+        return $this->assertStringArrayMetadata($field, $config[$field]);
+    }
+
+    /**
+     * @param string $field
+     * @param mixed $value
+     * @return array<string>
+     * @throws IdentityProviderException
+     */
+    protected function assertStringArrayMetadata(string $field, $value): array
+    {
+        if (!is_array($value)) {
+            throw new IdentityProviderException(
+                sprintf('Invalid well-known configuration: %s must be an array of strings', $field),
+                0,
+                null
+            );
+        }
+
+        foreach ($value as $item) {
+            if (!is_string($item)) {
+                throw new IdentityProviderException(
+                    sprintf('Invalid well-known configuration: %s must be an array of strings', $field),
+                    0,
+                    null
+                );
+            }
+        }
+
+        return $value;
     }
 
     /**
