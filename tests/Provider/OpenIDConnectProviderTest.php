@@ -931,4 +931,40 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertFalse($isDPopNonceError($e4));
     }
 
+
+    public function testDiscoveryRejectsNonStringEndpointValue(): void
+    {
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('must be a string URL');
+
+        $history = [];
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint' => 12345,
+            ]),
+        ], $history);
+    }
+
+    public function testDiscoveryRejectsMissingRequiredField(): void
+    {
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('missing authorization_endpoint');
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([
+            new Response(200, ['Content-Type' => 'application/json'], json_encode([
+                'issuer' => 'https://idp.test',
+                'token_endpoint' => 'https://idp.test/oauth2/token',
+                // authorization_endpoint missing
+            ])),
+        ], $history);
+
+        new \Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider([
+            'clientId' => 'test',
+            'issuer' => 'https://idp.test',
+            'cacheDir' => sys_get_temp_dir() . '/oauth2-oidc-tests-' . uniqid(),
+        ], [
+            'httpClient' => $httpClient,
+        ]);
+    }
 }
