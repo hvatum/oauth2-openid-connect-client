@@ -863,4 +863,72 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertArrayNotHasKey('client_secret', $params);
     }
 
+    public function testCheckResponseThrowsOnErrorInSuccessStatusBody(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            // 200 response but with error field in body
+            new Response(200, ['Content-Type' => 'application/json'], json_encode([
+                'error' => 'server_error',
+                'error_description' => 'Unexpected internal failure',
+            ])),
+        ], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Unexpected internal failure');
+
+        $provider->getAccessToken('client_credentials');
+    }
+
+    public function testIsDPopNonceErrorDetectsErrorInMessage(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history);
+
+        $isDPopNonceError = \Closure::bind(
+            fn(\League\OAuth2\Client\Provider\Exception\IdentityProviderException $e) =>
+                $this->isDPopNonceError($e),
+            $provider,
+            $provider
+        );
+
+        // Direct message match
+        $e1 = new \League\OAuth2\Client\Provider\Exception\IdentityProviderException(
+            'use_dpop_nonce', 400, null
+        );
+        self::assertTrue($isDPopNonceError($e1));
+
+        // Non-matching message, no response body
+        $e2 = new \League\OAuth2\Client\Provider\Exception\IdentityProviderException(
+            'invalid_grant', 400, null
+        );
+        self::assertFalse($isDPopNonceError($e2));
+
+        // Non-matching message, but response body contains use_dpop_nonce
+        $response = new Response(400, [], json_encode(['error' => 'use_dpop_nonce']));
+        $e3 = new \League\OAuth2\Client\Provider\Exception\IdentityProviderException(
+            'DPoP nonce required', 400, $response
+        );
+        self::assertTrue($isDPopNonceError($e3));
+
+        // Non-matching message, response body has different error
+        $response2 = new Response(400, [], json_encode(['error' => 'invalid_request']));
+        $e4 = new \League\OAuth2\Client\Provider\Exception\IdentityProviderException(
+            'Something else', 400, $response2
+        );
+        self::assertFalse($isDPopNonceError($e4));
+    }
+
 }
