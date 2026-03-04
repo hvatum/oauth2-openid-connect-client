@@ -544,4 +544,138 @@ final class IdTokenValidationTest extends TestCase
         $this->expectExceptionMessage('azp');
         $provider->validateIdToken($idToken);
     }
+
+    // ── id_token_signing_alg_values_supported tests ──
+
+    public function testIdTokenAcceptedWhenAlgInServerList(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'id_token_signing_alg_values_supported' => ['ES256', 'RS256'],
+            ]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $result = $provider->validateIdToken($idToken);
+        self::assertSame('user-1', $result['sub']);
+    }
+
+    public function testIdTokenAcceptedWhenServerAdvertisesAllThree(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-2',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'id_token_signing_alg_values_supported' => ['ES256', 'RS256', 'PS256'],
+            ]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $result = $provider->validateIdToken($idToken);
+        self::assertSame('user-2', $result['sub']);
+    }
+
+    public function testIdTokenRejectedWhenAlgNotInServerList(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        // Token is signed with ES256, but server only allows RS256
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'id_token_signing_alg_values_supported' => ['RS256'],
+            ]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage("Invalid ID token algorithm: 'ES256'");
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testIdTokenRejectsWhenNoMutualAlgorithms(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'id_token_signing_alg_values_supported' => ['ES384', 'ES512'],
+            ]),
+        ], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('No mutually supported ID token signing algorithms');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testIdTokenDefaultsToRS256WhenFieldMissing(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        // Token signed with ES256, but discovery omits the field → default is ['RS256']
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        // Explicitly remove the field to test the default
+        $wellKnown = TestHelper::wellKnownResponse([
+            'id_token_signing_alg_values_supported' => null,
+        ]);
+        // array_merge with null won't remove the key, so rebuild without it
+        $body = json_decode((string) $wellKnown->getBody(), true);
+        unset($body['id_token_signing_alg_values_supported']);
+        $wellKnown = new \GuzzleHttp\Psr7\Response(
+            200,
+            ['Content-Type' => 'application/json'],
+            json_encode($body)
+        );
+
+        $provider = TestHelper::fullProvider([$wellKnown], $history);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage("Invalid ID token algorithm: 'ES256'");
+        $provider->validateIdToken($idToken);
+    }
 }

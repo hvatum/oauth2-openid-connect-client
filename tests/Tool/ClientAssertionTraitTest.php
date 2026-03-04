@@ -249,6 +249,125 @@ final class ClientAssertionTraitTest extends TestCase
         $provider->debugAccessTokenRequestFromGrant('client_credentials');
     }
 
+    // ── token_endpoint_auth_signing_alg_values_supported tests ──
+
+    public function testAssertionAlgAcceptedWhenInServerList(): void
+    {
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'kid-1';
+
+        $privPath = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint_auth_signing_alg_values_supported' => ['ES256', 'RS256'],
+            ]),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'privateKeyPath' => $privPath,
+            'keyId' => 'kid-1',
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+        self::assertArrayHasKey('client_assertion', $params);
+    }
+
+    public function testAssertionAlgAcceptedWhenServerListsAll9(): void
+    {
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'kid-1';
+
+        $privPath = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint_auth_signing_alg_values_supported' => [
+                    'ES256', 'ES384', 'ES512', 'RS256', 'RS384', 'RS512', 'PS256', 'PS384', 'PS512',
+                ],
+            ]),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'privateKeyPath' => $privPath,
+            'keyId' => 'kid-1',
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+        self::assertArrayHasKey('client_assertion', $params);
+    }
+
+    public function testAssertionAlgRejectedWhenNotInServerList(): void
+    {
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'kid-1';
+
+        $privPath = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint_auth_signing_alg_values_supported' => ['RS256'],
+            ]),
+        ], $history, [
+            'privateKeyPath' => $privPath,
+            'keyId' => 'kid-1',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Client assertion algorithm "ES256" is not supported by the authorization server');
+        $provider->debugAccessTokenRequestFromGrant('client_credentials');
+    }
+
+    public function testAssertionAlgSkipsValidationWhenNotAdvertised(): void
+    {
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'kid-1';
+
+        $privPath = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+        // Default wellKnownResponse has no token_endpoint_auth_signing_alg_values_supported
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'privateKeyPath' => $privPath,
+            'keyId' => 'kid-1',
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+        self::assertArrayHasKey('client_assertion', $params);
+    }
+
     private function generateRsaPrivateJwk(string $kid): array
     {
         $resource = openssl_pkey_new([

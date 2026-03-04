@@ -807,8 +807,25 @@ class OpenIDConnectProvider extends AbstractProvider
             throw new IdentityProviderException('Invalid ID token format', 0, null);
         }
 
-        // Whitelist of allowed algorithms (prevent algorithm confusion attacks)
-        $allowedAlgorithms = ['ES256', 'RS256', 'PS256'];
+        // Algorithms this library can verify (prevent algorithm confusion attacks)
+        $librarySupported = ['ES256', 'RS256', 'PS256'];
+
+        // Intersect with what the server advertises (from discovery)
+        $allowedAlgorithms = array_values(array_intersect(
+            $librarySupported,
+            $this->idTokenSigningAlgValuesSupported
+        ));
+
+        if (empty($allowedAlgorithms)) {
+            throw new IdentityProviderException(
+                'No mutually supported ID token signing algorithms. '
+                . 'Server supports: ' . implode(', ', $this->idTokenSigningAlgValuesSupported)
+                . '. Library supports: ' . implode(', ', $librarySupported),
+                0,
+                null
+            );
+        }
+
         $tokenAlg = $header['alg'] ?? null;
 
         if (!is_string($tokenAlg) || !in_array($tokenAlg, $allowedAlgorithms, true)) {
@@ -824,12 +841,17 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         try {
-            // Use web-token for signature verification with supported algorithms
-            $algorithmManager = new AlgorithmManager([
-                new ES256(),
-                new RS256(),
-                new PS256(),
-            ]);
+            // Build AlgorithmManager with only mutually supported algorithms
+            $algorithmMap = [
+                'ES256' => ES256::class,
+                'RS256' => RS256::class,
+                'PS256' => PS256::class,
+            ];
+            $algorithms = [];
+            foreach ($allowedAlgorithms as $alg) {
+                $algorithms[] = new $algorithmMap[$alg]();
+            }
+            $algorithmManager = new AlgorithmManager($algorithms);
             $jwsVerifier = new JWSVerifier($algorithmManager);
             $jwkSet = JWKSet::createFromKeyData($this->getJwks());
 

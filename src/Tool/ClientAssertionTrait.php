@@ -130,8 +130,21 @@ trait ClientAssertionTrait
 
         $expiresIn = $expiresIn ?? static::CLIENT_ASSERTION_TTL;
 
-        // Load JWK (this may extract kid from JWK file)
+        // Load JWK first (this detects the actual algorithm from the key)
         $jwk = $this->getClientAssertionJwk();
+
+        // Validate algorithm against server's advertised list (if available)
+        if ($this->tokenEndpointAuthSigningAlgValuesSupported !== null
+            && !in_array($this->clientAssertionAlgorithm, $this->tokenEndpointAuthSigningAlgValuesSupported, true)
+        ) {
+            throw new \RuntimeException(
+                sprintf(
+                    'Client assertion algorithm "%s" is not supported by the authorization server. Supported: %s',
+                    $this->clientAssertionAlgorithm,
+                    implode(', ', $this->tokenEndpointAuthSigningAlgValuesSupported)
+                )
+            );
+        }
 
         // Verify kid is available
         if ($this->clientAssertionKeyId === null) {
