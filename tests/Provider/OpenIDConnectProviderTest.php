@@ -1319,4 +1319,80 @@ final class OpenIDConnectProviderTest extends TestCase
 
         $provider->debugAccessTokenRequestFromGrant('client_credentials');
     }
+
+    // ── token_endpoint_auth_methods_supported tests ──
+
+    public function testAuthMethodAcceptsPrivateKeyJwt(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint_auth_methods_supported' => ['private_key_jwt'],
+            ]),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+        self::assertArrayHasKey('client_assertion', $params);
+    }
+
+    public function testAuthMethodAcceptsClientSecretPost(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint_auth_methods_supported' => ['client_secret_post', 'client_secret_basic'],
+            ]),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+        self::assertNotNull($token);
+    }
+
+    public function testAuthMethodRejectsUnsupportedPrivateKeyJwt(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint_auth_methods_supported' => ['client_secret_post'],
+            ]),
+        ], $history);
+
+        $provider->setPkceCode('verifier');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Client uses private_key_jwt authentication but the authorization server does not support it');
+        $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+    }
+
+    public function testAuthMethodRejectsUnsupportedClientSecretPost(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'token_endpoint_auth_methods_supported' => ['private_key_jwt'],
+            ]),
+        ], $history);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Client uses client_secret_post authentication but the authorization server does not support it');
+        $provider->getAccessToken('client_credentials');
+    }
+
+    public function testAuthMethodSkipsValidationWhenNotAdvertised(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+        self::assertNotNull($token);
+    }
 }

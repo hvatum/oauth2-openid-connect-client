@@ -331,6 +331,20 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     protected function getAccessTokenBody(array $params): string
     {
+        // Validate token endpoint auth method against server's advertised list
+        if ($this->tokenEndpointAuthMethodsSupported !== null) {
+            $method = $this->hasClientAssertion() ? 'private_key_jwt' : 'client_secret_post';
+            if (!in_array($method, $this->tokenEndpointAuthMethodsSupported, true)) {
+                throw new \RuntimeException(
+                    sprintf(
+                        'Client uses %s authentication but the authorization server does not support it. Supported: %s',
+                        $method,
+                        implode(', ', $this->tokenEndpointAuthMethodsSupported)
+                    )
+                );
+            }
+        }
+
         // Add client assertion (private_key_jwt) if configured
         if ($this->hasClientAssertion()) {
             $assertion = $this->createClientAssertion($this->tokenUrl);
