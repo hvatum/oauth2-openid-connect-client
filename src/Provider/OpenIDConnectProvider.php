@@ -348,7 +348,9 @@ class OpenIDConnectProvider extends AbstractProvider
 
     /**
      * Build access token request body
-     * Adds client assertion, DPoP thumbprint, and handles formatting
+     *
+     * Adds client assertion, DPoP thumbprint, authorization_details (RFC 9396),
+     * and handles formatting.
      *
      * @param array $params
      * @return string
@@ -369,12 +371,32 @@ class OpenIDConnectProvider extends AbstractProvider
             }
         }
 
+        // RFC 9396: authorization_details is sent as a JSON string parameter.
+        $params = $this->normalizeAuthorizationDetailsParameter($params);
+        $authorizationDetails = $this->decodeAuthorizationDetailsValue($params['authorization_details'] ?? null);
+
         // Add client assertion (private_key_jwt) if configured
         if ($this->hasClientAssertion()) {
+            $restoreAssertionDetails = false;
+            $previousAssertionDetails = $this->clientAuthorizationDetails;
+            $assertionDetails = $this->getAuthorizationDetailsForClientAssertion($params, $authorizationDetails);
+            if ($assertionDetails !== null) {
+                $this->setClientAuthorizationDetails($assertionDetails);
+                $restoreAssertionDetails = true;
+
+                if (!$this->shouldSendAuthorizationDetailsInTokenRequest($params, $authorizationDetails)) {
+                    unset($params['authorization_details']);
+                }
+            }
+
             $assertion = $this->createClientAssertion($this->getClientAssertionAudience());
             $params['client_assertion_type'] = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
             $params['client_assertion'] = $assertion;
             unset($params['client_secret']);
+
+            if ($restoreAssertionDetails) {
+                $this->setClientAuthorizationDetails($previousAssertionDetails);
+            }
         }
 
         // Add DPoP key thumbprint for token binding
@@ -388,6 +410,70 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         return $this->buildQueryString($params);
+    }
+
+    /**
+     * Normalize authorization_details parameter to a JSON string (RFC 9396).
+     *
+     * @param array $params
+     * @return array
+     */
+    protected function normalizeAuthorizationDetailsParameter(array $params): array
+    {
+        if (isset($params['authorization_details']) && !is_string($params['authorization_details'])) {
+            $params['authorization_details'] = json_encode(
+                $params['authorization_details'],
+                JSON_UNESCAPED_SLASHES
+            );
+        }
+
+        return $params;
+    }
+
+    /**
+     * Decode authorization_details value into array form for internal extension hooks.
+     *
+     * @param mixed $authorizationDetails
+     * @return array|null
+     */
+    protected function decodeAuthorizationDetailsValue($authorizationDetails): ?array
+    {
+        if (is_array($authorizationDetails)) {
+            return $authorizationDetails;
+        }
+
+        if (is_string($authorizationDetails)) {
+            $decoded = json_decode($authorizationDetails, true);
+            return is_array($decoded) ? $decoded : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Extension hook for profile-specific claim embedding in client assertions.
+     * Default keeps RFC 9396 behavior and does not copy authorization_details into JWT claims.
+     *
+     * @param array $params
+     * @param array|null $authorizationDetails Decoded authorization_details if available
+     * @return array|null Details to pass to setClientAuthorizationDetails(), or null for no embedding
+     */
+    protected function getAuthorizationDetailsForClientAssertion(array $params, ?array $authorizationDetails): ?array
+    {
+        return null;
+    }
+
+    /**
+     * Extension hook to optionally omit authorization_details from the token request body
+     * when getAuthorizationDetailsForClientAssertion() returns details.
+     *
+     * @param array $params
+     * @param array|null $authorizationDetails
+     * @return bool
+     */
+    protected function shouldSendAuthorizationDetailsInTokenRequest(array $params, ?array $authorizationDetails): bool
+    {
+        return true;
     }
 
     /**
@@ -529,6 +615,9 @@ class OpenIDConnectProvider extends AbstractProvider
         // Generate and store nonce for ID token validation
         $this->nonce = $this->generateNonce();
         $params['nonce'] = $this->nonce;
+
+        // RFC 9396: authorization_details in authorization and PAR requests is JSON.
+        $params = $this->normalizeAuthorizationDetailsParameter($params);
 
         // Validate PKCE method against server's advertised list
         if ($this->codeChallengeMethodsSupported !== null

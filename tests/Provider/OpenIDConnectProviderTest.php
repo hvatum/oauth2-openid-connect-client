@@ -1590,4 +1590,125 @@ final class OpenIDConnectProviderTest extends TestCase
         $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
         self::assertSame('https://idp.test', $payload['aud']);
     }
+
+    // -------------------------------------------------------------------------
+    // authorization_details (RFC 9396 - Rich Authorization Requests)
+    // -------------------------------------------------------------------------
+
+    public function testAuthorizationDetailsJsonEncodedForAuthCodeGrant(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $details = [['type' => 'payment_initiation', 'instructedAmount' => ['amount' => 100, 'currency' => 'EUR']]];
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', [
+            'code' => 'abc',
+            'authorization_details' => $details,
+        ]);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+
+        self::assertArrayHasKey('authorization_details', $params);
+        $decoded = json_decode($params['authorization_details'], true);
+        self::assertSame('payment_initiation', $decoded[0]['type']);
+    }
+
+    public function testAuthorizationDetailsJsonEncodedForClientCredentials(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $details = [['type' => 'payment_initiation', 'instructedAmount' => ['amount' => 100, 'currency' => 'EUR']]];
+
+        $request = $provider->debugAccessTokenRequestFromGrant('client_credentials', [
+            'authorization_details' => $details,
+        ]);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+
+        // RFC 9396: authorization_details must be present in the token request body.
+        self::assertArrayHasKey('authorization_details', $params);
+        $decoded = json_decode($params['authorization_details'], true);
+        self::assertSame('payment_initiation', $decoded[0]['type']);
+
+        // Default behavior does not copy authorization_details into client assertion claims.
+        $payloadB64 = explode('.', $params['client_assertion'])[1];
+        $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
+        self::assertArrayNotHasKey('authorization_details', $payload);
+    }
+
+    public function testAuthorizationDetailsPassedAsStringIsPreserved(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $jsonStr = '[{"type":"payment_initiation"}]';
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', [
+            'code' => 'abc',
+            'authorization_details' => $jsonStr,
+        ]);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+
+        // Pre-encoded string should be passed through as-is
+        self::assertSame($jsonStr, $params['authorization_details']);
+    }
+
+    public function testAuthorizationDetailsJsonEncodedForAuthorizationRequestWithoutPAR(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'pushed_authorization_request_endpoint' => null,
+            ]),
+        ], $history);
+
+        $details = [['type' => 'payment_initiation']];
+        $url = $provider->getAuthorizationUrl([
+            'authorization_details' => $details,
+        ]);
+
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+        self::assertArrayHasKey('authorization_details', $params);
+        self::assertIsString($params['authorization_details']);
+        self::assertSame('payment_initiation', json_decode($params['authorization_details'], true)[0]['type']);
+    }
+
+    public function testAuthorizationDetailsJsonEncodedForPARRequest(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $details = [['type' => 'payment_initiation']];
+        $provider->getAuthorizationUrl([
+            'authorization_details' => $details,
+        ]);
+
+        $parBody = (string) $history[1]['request']->getBody();
+        parse_str($parBody, $parParams);
+        self::assertArrayHasKey('authorization_details', $parParams);
+        self::assertIsString($parParams['authorization_details']);
+        self::assertSame('payment_initiation', json_decode($parParams['authorization_details'], true)[0]['type']);
+    }
+
 }

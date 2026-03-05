@@ -99,19 +99,19 @@ trait ClientAssertionTrait
     }
 
     /**
-     * Assertion details for client assertion (organization info for M2M)
+     * Authorization details to embed in client assertion JWT (RFC 9396 + profile-specific)
      */
-    protected ?array $clientAssertionDetails = null;
+    protected ?array $clientAuthorizationDetails = null;
 
     /**
-     * Set assertion details for client assertion (for M2M organization delegation)
+     * Set authorization details for embedding in client assertion JWT.
      *
      * @param array|null $details
      * @codeCoverageIgnore
      */
-    public function setClientAssertionDetails(?array $details): void
+    public function setClientAuthorizationDetails(?array $details): void
     {
-        $this->clientAssertionDetails = $details;
+        $this->clientAuthorizationDetails = $details;
     }
 
     /**
@@ -167,9 +167,9 @@ trait ClientAssertionTrait
             'exp' => $now + $expiresIn,
         ];
 
-        // Add assertion_details for M2M organization delegation
-        if ($this->clientAssertionDetails !== null) {
-            $payloadData['assertion_details'] = $this->clientAssertionDetails;
+        // Embed authorization_details in JWT when set by profile-specific extension hooks
+        if ($this->clientAuthorizationDetails !== null) {
+            $payloadData['authorization_details'] = $this->clientAuthorizationDetails;
         }
 
         $payload = json_encode($payloadData, JSON_UNESCAPED_SLASHES);

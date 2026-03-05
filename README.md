@@ -8,6 +8,7 @@ A generic OpenID Connect provider for [The PHP League's OAuth2 Client](https://g
 - **DPoP** (Demonstrating Proof of Possession) — [RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449)
 - **Private Key JWT** client authentication — [RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523)
 - **ID Token validation** — Signature verification, claim validation, nonce checking
+- **Rich Authorization Requests** — [RFC 9396](https://datatracker.ietf.org/doc/html/rfc9396) parameter transport with extension hooks
 - **RFC 9207** — Authorization Server Issuer Identification (mix-up attack protection)
 
 ## Disclaimer
@@ -206,6 +207,34 @@ class MyProvider extends OpenIDConnectProvider
 }
 ```
 
+### Authorization Details (RFC 9396) and Profile Hooks
+
+By default, `authorization_details` follows RFC 9396 parameter transport:
+- Authorization request / PAR request: sent as JSON string parameter
+- Token request: sent as JSON string parameter
+- No default embedding into `client_assertion` claims
+
+If a provider profile requires embedding `authorization_details` in `client_assertion`, override these hooks:
+
+```php
+class MyProvider extends OpenIDConnectProvider
+{
+    protected function getAuthorizationDetailsForClientAssertion(array $params, ?array $authorizationDetails): ?array
+    {
+        if (($params['grant_type'] ?? '') !== 'client_credentials') {
+            return null;
+        }
+
+        return $authorizationDetails;
+    }
+
+    protected function shouldSendAuthorizationDetailsInTokenRequest(array $params, ?array $authorizationDetails): bool
+    {
+        return false;
+    }
+}
+```
+
 ## Supported RFCs
 
 | RFC | Feature | Status |
@@ -217,6 +246,7 @@ class MyProvider extends OpenIDConnectProvider
 | [RFC 7638](https://datatracker.ietf.org/doc/html/rfc7638) | JWK Thumbprint | Supported |
 | [RFC 9126](https://datatracker.ietf.org/doc/html/rfc9126) | Pushed Authorization Requests (PAR) | Supported |
 | [RFC 9207](https://datatracker.ietf.org/doc/html/rfc9207) | Authorization Server Issuer Identification | Supported |
+| [RFC 9396](https://datatracker.ietf.org/doc/html/rfc9396) | Rich Authorization Requests | Supported |
 | [RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449) | DPoP (Demonstrating Proof of Possession) | Supported |
 
 ## License
