@@ -1711,4 +1711,104 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertSame('payment_initiation', json_decode($parParams['authorization_details'], true)[0]['type']);
     }
 
+    public function testRequestScopedAuthorizationDetailsAreRestoredWhenClientAssertionCreationFails(): void
+    {
+        $history = [];
+        $provider = $this->createEmbeddingProfileProviderWithFailingFirstAssertion([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse(),
+        ], $history);
+
+        try {
+            $provider->debugAccessTokenRequestFromGrant('client_credentials', [
+                'authorization_details' => [['type' => 'payment_initiation']],
+            ]);
+            self::fail('Expected createClientAssertion() to fail on first call');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('forced assertion failure', $e->getMessage());
+        }
+
+        $provider->getAuthorizationUrl();
+
+        $parRequest = $history[count($history) - 1]['request'];
+        parse_str((string) $parRequest->getBody(), $parParams);
+        $parPayloadB64 = explode('.', $parParams['client_assertion'])[1];
+        $parPayload = json_decode(base64_decode(strtr($parPayloadB64, '-_', '+/')), true);
+
+        self::assertArrayNotHasKey('authorization_details', $parPayload);
+    }
+
+    public function testInvalidAuthorizationDetailsFailsFast(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('authorization_details');
+
+        $provider->setPkceCode('verifier');
+        $provider->debugAccessTokenRequestFromGrant('authorization_code', [
+            'code' => 'abc',
+            'authorization_details' => [[
+                'type' => 'payment_initiation',
+                'bad' => "\xB1\x31",
+            ]],
+        ]);
+    }
+
+    private function createEmbeddingProfileProviderWithFailingFirstAssertion(array $responses, array &$history): \Hvatum\OpenIDConnect\Client\Test\TestProvider
+    {
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'test-client-key';
+
+        [$dpopPriv, $dpopPub, ] = TestHelper::generateEcKeyPair();
+
+        $httpClient = TestHelper::httpClient($responses, $history);
+        $requestFactory = new \League\OAuth2\Client\Tool\RequestFactory();
+
+        return new class([
+            'clientId' => 'client-123',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+            'privateKeyPath' => TestHelper::createTempKeyFile(json_encode($jwk)),
+            'dpopPrivateKeyPath' => TestHelper::createTempKeyFile($dpopPriv),
+            'dpopPublicKeyPath' => TestHelper::createTempKeyFile($dpopPub),
+            'cacheDir' => sys_get_temp_dir() . '/oauth2-oidc-tests-' . uniqid(),
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => $requestFactory,
+        ]) extends \Hvatum\OpenIDConnect\Client\Test\TestProvider {
+            private int $assertionCreateCalls = 0;
+
+            protected function getAuthorizationDetailsForClientAssertion(array $params, ?array $authorizationDetails): ?array
+            {
+                if (($params['grant_type'] ?? '') !== 'client_credentials') {
+                    return null;
+                }
+
+                return $authorizationDetails;
+            }
+
+            protected function shouldSendAuthorizationDetailsInTokenRequest(array $params, ?array $authorizationDetails): bool
+            {
+                return false;
+            }
+
+            protected function createClientAssertion(string $audience, ?int $expiresIn = null): string
+            {
+                $this->assertionCreateCalls++;
+                if ($this->assertionCreateCalls === 1) {
+                    throw new \RuntimeException('forced assertion failure for test');
+                }
+                return parent::createClientAssertion($audience, $expiresIn);
+            }
+        };
+    }
+
 }

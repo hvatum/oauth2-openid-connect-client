@@ -377,25 +377,23 @@ class OpenIDConnectProvider extends AbstractProvider
 
         // Add client assertion (private_key_jwt) if configured
         if ($this->hasClientAssertion()) {
-            $restoreAssertionDetails = false;
-            $previousAssertionDetails = $this->clientAuthorizationDetails;
+            $previousAuthorizationDetails = $this->clientAuthorizationDetails;
             $assertionDetails = $this->getAuthorizationDetailsForClientAssertion($params, $authorizationDetails);
             if ($assertionDetails !== null) {
                 $this->setClientAuthorizationDetails($assertionDetails);
-                $restoreAssertionDetails = true;
 
                 if (!$this->shouldSendAuthorizationDetailsInTokenRequest($params, $authorizationDetails)) {
                     unset($params['authorization_details']);
                 }
             }
 
-            $assertion = $this->createClientAssertion($this->getClientAssertionAudience());
-            $params['client_assertion_type'] = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
-            $params['client_assertion'] = $assertion;
-            unset($params['client_secret']);
-
-            if ($restoreAssertionDetails) {
-                $this->setClientAuthorizationDetails($previousAssertionDetails);
+            try {
+                $assertion = $this->createClientAssertion($this->getClientAssertionAudience());
+                $params['client_assertion_type'] = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+                $params['client_assertion'] = $assertion;
+                unset($params['client_secret']);
+            } finally {
+                $this->setClientAuthorizationDetails($previousAuthorizationDetails);
             }
         }
 
@@ -421,10 +419,18 @@ class OpenIDConnectProvider extends AbstractProvider
     protected function normalizeAuthorizationDetailsParameter(array $params): array
     {
         if (isset($params['authorization_details']) && !is_string($params['authorization_details'])) {
-            $params['authorization_details'] = json_encode(
-                $params['authorization_details'],
-                JSON_UNESCAPED_SLASHES
-            );
+            try {
+                $params['authorization_details'] = json_encode(
+                    $params['authorization_details'],
+                    JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+                );
+            } catch (\JsonException $e) {
+                throw new \RuntimeException(
+                    'Failed to JSON-encode authorization_details: ' . $e->getMessage(),
+                    0,
+                    $e
+                );
+            }
         }
 
         return $params;
