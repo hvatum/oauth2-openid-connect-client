@@ -382,7 +382,7 @@ class OpenIDConnectProvider extends AbstractProvider
             if ($assertionDetails !== null) {
                 $this->setClientAuthorizationDetails($assertionDetails);
 
-                if (!$this->shouldSendAuthorizationDetailsInTokenRequest($params, $authorizationDetails)) {
+                if (!$this->shouldSendAuthorizationDetailsInTokenRequestBody($params, $authorizationDetails)) {
                     unset($params['authorization_details']);
                 }
             }
@@ -477,7 +477,7 @@ class OpenIDConnectProvider extends AbstractProvider
      * @param array|null $authorizationDetails
      * @return bool
      */
-    protected function shouldSendAuthorizationDetailsInTokenRequest(array $params, ?array $authorizationDetails): bool
+    protected function shouldSendAuthorizationDetailsInTokenRequestBody(array $params, ?array $authorizationDetails): bool
     {
         return true;
     }

@@ -228,7 +228,7 @@ class MyProvider extends OpenIDConnectProvider
         return $authorizationDetails;
     }
 
-    protected function shouldSendAuthorizationDetailsInTokenRequest(array $params, ?array $authorizationDetails): bool
+    protected function shouldSendAuthorizationDetailsInTokenRequestBody(array $params, ?array $authorizationDetails): bool
     {
         return false;
     }
