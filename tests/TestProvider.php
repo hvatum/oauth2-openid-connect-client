@@ -11,7 +11,7 @@ use Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider;
 /**
  * Test double to bypass strict token construction while still exercising request logic.
  */
-final class TestProvider extends OpenIDConnectProvider
+class TestProvider extends OpenIDConnectProvider
 {
     public function debugAccessTokenRequest(array $params)
     {

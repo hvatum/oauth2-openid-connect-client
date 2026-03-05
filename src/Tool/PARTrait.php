@@ -96,9 +96,12 @@ trait PARTrait
     {
         if (method_exists($this, 'hasClientAssertion') && $this->hasClientAssertion()) {
             // private_key_jwt authentication — RFC 9126 §2 says PAR uses the same client
-            // authentication as the token endpoint, so use token endpoint URL as audience
-            // per RFC 7523 §3 (most servers validate against this).
-            $assertion = $this->createClientAssertion($this->tokenUrl);
+            // authentication as the token endpoint. Uses getClientAssertionAudience() which
+            // defaults to token endpoint URL per RFC 7523 §3 but can be overridden.
+            $audience = method_exists($this, 'getClientAssertionAudience')
+                ? $this->getClientAssertionAudience()
+                : $this->tokenUrl;
+            $assertion = $this->createClientAssertion($audience);
             $params['client_assertion_type'] = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
             $params['client_assertion'] = $assertion;
         } elseif (isset($this->clientSecret) && $this->clientSecret !== null && $this->clientSecret !== '') {

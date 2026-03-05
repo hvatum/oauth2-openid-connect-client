@@ -329,6 +329,24 @@ class OpenIDConnectProvider extends AbstractProvider
     }
 
     /**
+     * Get the audience URL for client assertion JWTs.
+     *
+     * Default: token endpoint URL per RFC 7523 §3.
+     * Override in subclasses if the authorization server requires a different audience
+     * (e.g. the issuer URL instead of the token endpoint).
+     * 
+     * See
+     * https://datatracker.ietf.org/doc/draft-ietf-oauth-rfc7523bis/06/
+     * section 3
+     *
+     * @return string
+     */
+    protected function getClientAssertionAudience(): string
+    {
+        return $this->tokenUrl;
+    }
+
+    /**
      * Build access token request body
      * Adds client assertion, DPoP thumbprint, and handles formatting
      *
@@ -353,7 +371,7 @@ class OpenIDConnectProvider extends AbstractProvider
 
         // Add client assertion (private_key_jwt) if configured
         if ($this->hasClientAssertion()) {
-            $assertion = $this->createClientAssertion($this->tokenUrl);
+            $assertion = $this->createClientAssertion($this->getClientAssertionAudience());
             $params['client_assertion_type'] = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
             $params['client_assertion'] = $assertion;
             unset($params['client_secret']);

@@ -194,6 +194,18 @@ class MyProvider extends OpenIDConnectProvider
 }
 ```
 
+Some authorization servers require the client assertion `aud` claim to be the issuer URL instead of the token endpoint (the default per RFC 7523 §3). Override `getClientAssertionAudience()`:
+
+```php
+class MyProvider extends OpenIDConnectProvider
+{
+    protected function getClientAssertionAudience(): string
+    {
+        return $this->issuerUrl;
+    }
+}
+```
+
 ## Supported RFCs
 
 | RFC | Feature | Status |

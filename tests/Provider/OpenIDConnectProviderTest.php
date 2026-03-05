@@ -6,6 +6,7 @@ namespace Hvatum\OpenIDConnect\Client\Test\Provider;
 
 use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\TestCase;
+use Hvatum\OpenIDConnect\Client\Test\IssuerAudienceTestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 
 final class OpenIDConnectProviderTest extends TestCase
@@ -1526,5 +1527,67 @@ final class OpenIDConnectProviderTest extends TestCase
         $parsed = parse_url($url);
         parse_str($parsed['query'], $params);
         self::assertArrayNotHasKey('request_uri', $params);
+    }
+
+    // -------------------------------------------------------------------------
+    // Client assertion audience hook
+    // -------------------------------------------------------------------------
+
+    public function testClientAssertionAudienceDefaultsToTokenEndpoint(): void
+    {
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+        self::assertNotEmpty($params['client_assertion']);
+
+        $payloadB64 = explode('.', $params['client_assertion'])[1];
+        $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
+        self::assertSame('https://idp.test/oauth2/token', $payload['aud']);
+    }
+
+    public function testSubclassCanOverrideClientAssertionAudience(): void
+    {
+        $history = [];
+        $provider = IssuerAudienceTestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $body = (string) $request->getBody();
+        parse_str($body, $params);
+
+        $payloadB64 = explode('.', $params['client_assertion'])[1];
+        $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
+        self::assertSame('https://idp.test', $payload['aud']);
+    }
+
+    public function testParRequestUsesOverriddenClientAssertionAudience(): void
+    {
+        $history = [];
+        $provider = IssuerAudienceTestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse(),
+        ], $history);
+
+        $provider->getAuthorizationUrl();
+
+        // history[0] = well-known, history[1] = PAR
+        $parBody = (string) $history[1]['request']->getBody();
+        parse_str($parBody, $parParams);
+
+        $payloadB64 = explode('.', $parParams['client_assertion'])[1];
+        $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
+        self::assertSame('https://idp.test', $payload['aud']);
     }
 }
