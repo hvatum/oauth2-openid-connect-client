@@ -14,8 +14,6 @@ final class IssuerAudienceTestHelper
 {
     public static function fullProvider(array $responses, array &$history, array $options = []): IssuerAudienceTestProvider
     {
-        \Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider::clearWellKnownCache();
-
         // Auto-generate client assertion key if not provided
         if (!isset($options['privateKeyPath'])) {
             [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();

@@ -72,8 +72,6 @@ final class TestHelper
      */
     public static function basicProvider(array $responses, array &$history, array $options = []): TestProvider
     {
-        \Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider::clearWellKnownCache();
-
         $httpClient = self::httpClient($responses, $history);
         $requestFactory = new RequestFactory();
 

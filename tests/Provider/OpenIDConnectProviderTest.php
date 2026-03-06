@@ -8,15 +8,10 @@ use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Hvatum\OpenIDConnect\Client\Test\IssuerAudienceTestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
+use Hvatum\OpenIDConnect\Client\Test\TestProvider;
 
 final class OpenIDConnectProviderTest extends TestCase
 {
-    protected function tearDown(): void
-    {
-        parent::tearDown();
-        \Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider::clearWellKnownCache();
-    }
-
     public function testConstructorRequiresIssuer(): void
     {
         $this->expectException(\InvalidArgumentException::class);
@@ -549,174 +544,56 @@ final class OpenIDConnectProviderTest extends TestCase
         );
     }
 
-    public function testWellKnownCacheEntryValidationHelper(): void
+    public function testWellKnownConfigIsCachedViaPsr16(): void
     {
+        $cacheDir = sys_get_temp_dir() . '/oauth2-oidc-psr16-test-' . uniqid();
         $history = [];
         $provider = TestHelper::basicProvider([
             TestHelper::wellKnownResponse(),
-        ], $history);
+        ], $history, ['cacheDir' => $cacheDir]);
 
-        $isFresh = \Closure::bind(
-            fn($entry) => $this->isFreshInMemoryWellKnownCacheEntry($entry),
-            $provider,
-            $provider
-        );
+        // Well-known should have been cached
+        $cacheFiles = glob($cacheDir . '/wellknown_*.cache');
+        self::assertNotEmpty($cacheFiles, 'Well-known config should be cached to file');
 
-        self::assertTrue($isFresh([
-            'config' => ['issuer' => 'https://idp.test'],
-            'loaded_at' => time(),
-        ]));
-        self::assertFalse($isFresh('invalid'));
-        self::assertFalse($isFresh(['config' => ['issuer' => 'x']]));
-        self::assertFalse($isFresh([
-            'config' => ['issuer' => 'https://idp.test'],
-            'loaded_at' => time() - 90000,
-        ]));
-    }
-
-    public function testLoadWellKnownFromCacheRejectsInvalidJsonAndDeletesFile(): void
-    {
-        $history = [];
-        $provider = TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(),
-        ], $history);
-
-        $cacheFile = tempnam(sys_get_temp_dir(), 'wk_invalid_');
-        file_put_contents($cacheFile, '{not-json');
-
-        $loadFromCache = \Closure::bind(
-            fn(string $file) => $this->loadWellKnownFromCache($file),
-            $provider,
-            $provider
-        );
-
-        self::assertNull($loadFromCache($cacheFile));
-        self::assertFileDoesNotExist($cacheFile);
-    }
-
-    public function testLoadWellKnownFromCacheRejectsExpiredFileAndDeletesFile(): void
-    {
-        $history = [];
-        $provider = TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(),
-        ], $history);
-
-        $cacheFile = tempnam(sys_get_temp_dir(), 'wk_expired_');
-        file_put_contents($cacheFile, json_encode(['issuer' => 'https://idp.test']));
-        touch($cacheFile, time() - 90000);
-
-        $loadFromCache = \Closure::bind(
-            fn(string $file) => $this->loadWellKnownFromCache($file),
-            $provider,
-            $provider
-        );
-
-        self::assertNull($loadFromCache($cacheFile));
-        self::assertFileDoesNotExist($cacheFile);
-    }
-
-    public function testSaveWellKnownToCacheWritesFileWithCorrectPermissions(): void
-    {
-        $history = [];
-        $provider = TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(),
-        ], $history);
-
-        $cacheDir = sys_get_temp_dir() . '/oauth2-oidc-test-save-' . uniqid();
-        $cacheFile = $cacheDir . '/wellknown_test.json';
-
-        $saveToCache = \Closure::bind(
-            fn(string $file, array $config) => $this->saveWellKnownToCache($file, $config),
-            $provider,
-            $provider
-        );
-
-        $config = ['issuer' => 'https://idp.test', 'token_endpoint' => 'https://idp.test/token'];
-        $saveToCache($cacheFile, $config);
-
-        self::assertFileExists($cacheFile);
-        self::assertSame($config, json_decode(file_get_contents($cacheFile), true));
-        self::assertSame(0600, fileperms($cacheFile) & 0777);
+        // Read cache file and verify content
+        $content = file_get_contents($cacheFiles[0]);
+        $entry = json_decode($content, true);
+        self::assertArrayHasKey('data', $entry);
+        self::assertSame('https://idp.test', $entry['data']['issuer']);
 
         // Cleanup
-        @unlink($cacheFile);
+        array_map('unlink', glob($cacheDir . '/*'));
         @rmdir($cacheDir);
     }
 
-    public function testSetCacheDirIsUsedForCachePath(): void
+    public function testCustomPsr16CacheIsUsed(): void
     {
+        $cacheDir = sys_get_temp_dir() . '/oauth2-oidc-mock-cache-' . uniqid();
+        $mockCache = new \Hvatum\OpenIDConnect\Client\Cache\FilesystemCache($cacheDir);
+
         $history = [];
-        $provider = TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(),
-        ], $history);
+        $httpClient = TestHelper::httpClient([TestHelper::wellKnownResponse()], $history);
+        $requestFactory = new \League\OAuth2\Client\Tool\RequestFactory();
 
-        $customDir = '/tmp/custom-cache-dir-' . uniqid();
-        $provider->setCacheDir($customDir);
+        $provider = new \Hvatum\OpenIDConnect\Client\Test\TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => $requestFactory,
+            'cache' => $mockCache,
+        ]);
 
-        $getCacheFile = \Closure::bind(
-            fn(string $url) => $this->getWellKnownCacheFile($url),
-            $provider,
-            $provider
-        );
+        // Cache should have the well-known entry
+        $cacheKey = 'wellknown_' . md5('https://idp.test/.well-known/openid-configuration');
+        self::assertNotNull($mockCache->get($cacheKey));
 
-        $file = $getCacheFile('https://idp.test/.well-known/openid-configuration');
-        self::assertStringStartsWith($customDir . '/', $file);
-        self::assertStringContainsString('wellknown_', $file);
-    }
-
-    public function testGetCacheNamespaceReturnsHashedIdentifier(): void
-    {
-        $history = [];
-        $provider = TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(),
-        ], $history);
-
-        $getNamespace = \Closure::bind(
-            fn() => $this->getCacheNamespace(),
-            $provider,
-            $provider
-        );
-
-        $namespace = $getNamespace();
-        // Should be either a sha256 hash or 'default'
-        self::assertMatchesRegularExpression('/^([a-f0-9]{64}|default)$/', $namespace);
-    }
-
-    public function testLoadWellKnownFromCacheReturnsNullForMissingFile(): void
-    {
-        $history = [];
-        $provider = TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(),
-        ], $history);
-
-        $loadFromCache = \Closure::bind(
-            fn(string $file) => $this->loadWellKnownFromCache($file),
-            $provider,
-            $provider
-        );
-
-        self::assertNull($loadFromCache('/tmp/nonexistent-' . uniqid() . '.json'));
-    }
-
-    public function testLoadWellKnownFromCacheReturnsValidConfig(): void
-    {
-        $history = [];
-        $provider = TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(),
-        ], $history);
-
-        $config = ['issuer' => 'https://idp.test', 'authorization_endpoint' => 'https://idp.test/auth'];
-        $cacheFile = tempnam(sys_get_temp_dir(), 'wk_valid_');
-        file_put_contents($cacheFile, json_encode($config));
-
-        $loadFromCache = \Closure::bind(
-            fn(string $file) => $this->loadWellKnownFromCache($file),
-            $provider,
-            $provider
-        );
-
-        self::assertSame($config, $loadFromCache($cacheFile));
-        @unlink($cacheFile);
+        // Cleanup
+        array_map('unlink', glob($cacheDir . '/*'));
+        @rmdir($cacheDir);
     }
 
     public function testGetJwksThrowsOnHttpError(): void
@@ -795,6 +672,246 @@ final class OpenIDConnectProviderTest extends TestCase
         $this->expectExceptionMessage('Invalid JWKS response format');
 
         $provider->getIdToken();
+    }
+
+    public function testJwksIsCachedViaPsr16AfterFetch(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $mockCache = \Mockery::mock(\Psr\SimpleCache\CacheInterface::class);
+        $mockCache->shouldReceive('get')->with(\Mockery::pattern('/^wellknown_/'))->andReturn(null)->once();
+        $mockCache->shouldReceive('set')->with(
+            \Mockery::pattern('/^wellknown_/'),
+            \Mockery::on(fn($v) => is_array($v) && isset($v['issuer'])),
+            \Mockery::any()
+        )->once();
+        $mockCache->shouldReceive('get')->with(\Mockery::pattern('/^jwks_/'))->andReturn(null)->once();
+        $mockCache->shouldReceive('set')->with(
+            \Mockery::pattern('/^jwks_/'),
+            \Mockery::on(fn($v) => is_array($v) && isset($v['keys'])),
+            \Mockery::any()
+        )->once();
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider = new TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => new \League\OAuth2\Client\Tool\RequestFactory(),
+            'cache' => $mockCache,
+        ]);
+
+        $provider->getAccessToken('client_credentials');
+        $token = $provider->getIdToken();
+        self::assertNotNull($token);
+        \Mockery::close();
+    }
+
+    public function testCustomCacheTtlsAreUsedForWellKnownAndJwks(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $mockCache = \Mockery::mock(\Psr\SimpleCache\CacheInterface::class);
+        $mockCache->shouldReceive('get')->with(\Mockery::pattern('/^wellknown_/'))->andReturn(null)->once();
+        $mockCache->shouldReceive('set')->with(
+            \Mockery::pattern('/^wellknown_/'),
+            \Mockery::on(fn($v) => is_array($v) && isset($v['issuer'])),
+            42
+        )->once();
+        $mockCache->shouldReceive('get')->with(\Mockery::pattern('/^jwks_/'))->andReturn(null)->once();
+        $mockCache->shouldReceive('set')->with(
+            \Mockery::pattern('/^jwks_/'),
+            \Mockery::on(fn($v) => is_array($v) && isset($v['keys'])),
+            17
+        )->once();
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider = new TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+            'wellKnownCacheTtl' => 42,
+            'jwksCacheTtl' => 17,
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => new \League\OAuth2\Client\Tool\RequestFactory(),
+            'cache' => $mockCache,
+        ]);
+
+        $provider->getAccessToken('client_credentials');
+        $token = $provider->getIdToken();
+        self::assertNotNull($token);
+        \Mockery::close();
+    }
+
+    public function testRejectsNegativeWellKnownCacheTtlOption(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('wellKnownCacheTtl must be a non-negative integer');
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([], $history);
+        new TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+            'wellKnownCacheTtl' => -1,
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => new \League\OAuth2\Client\Tool\RequestFactory(),
+        ]);
+    }
+
+    public function testRejectsNonIntegerJwksCacheTtlOption(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('jwksCacheTtl must be a non-negative integer');
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([], $history);
+        new TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+            'jwksCacheTtl' => '3600',
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => new \League\OAuth2\Client\Tool\RequestFactory(),
+        ]);
+    }
+
+    public function testJwksIsLoadedFromPsr16CacheOnSecondInstance(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $jwksData = ['keys' => [$jwk]];
+
+        $mockCache = \Mockery::mock(\Psr\SimpleCache\CacheInterface::class);
+        // well-known config from cache
+        $mockCache->shouldReceive('get')->with(\Mockery::pattern('/^wellknown_/'))->andReturn([
+            'issuer' => 'https://idp.test',
+            'authorization_endpoint' => 'https://idp.test/oauth2/authorize',
+            'token_endpoint' => 'https://idp.test/oauth2/token',
+            'jwks_uri' => 'https://idp.test/oauth2/jwks',
+            'id_token_signing_alg_values_supported' => ['ES256', 'RS256'],
+        ]);
+        // JWKS from cache — no HTTP fetch needed
+        $mockCache->shouldReceive('get')->with(\Mockery::pattern('/^jwks_/'))->andReturn($jwksData)->once();
+        $mockCache->shouldNotReceive('set');
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([
+            // Only token response needed — no well-known or JWKS fetch
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+        ], $history);
+
+        $provider = new TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => new \League\OAuth2\Client\Tool\RequestFactory(),
+            'cache' => $mockCache,
+        ]);
+
+        $provider->getAccessToken('client_credentials');
+        $token = $provider->getIdToken();
+        self::assertNotNull($token);
+        // Verify only 1 HTTP request was made (token), no JWKS/well-known fetches
+        self::assertCount(1, $history);
+        \Mockery::close();
+    }
+
+    public function testJwksForceRefreshBypassesPsr16Cache(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $jwksData = ['keys' => [$jwk]];
+
+        $mockCache = \Mockery::mock(\Psr\SimpleCache\CacheInterface::class);
+        $mockCache->shouldReceive('get')->with(\Mockery::pattern('/^wellknown_/'))->andReturn([
+            'issuer' => 'https://idp.test',
+            'authorization_endpoint' => 'https://idp.test/oauth2/authorize',
+            'token_endpoint' => 'https://idp.test/oauth2/token',
+            'jwks_uri' => 'https://idp.test/oauth2/jwks',
+            'id_token_signing_alg_values_supported' => ['ES256', 'RS256'],
+        ]);
+        // JWKS cache should not be read (force refresh), but should be written after fetch
+        $mockCache->shouldNotReceive('get')->with(\Mockery::pattern('/^jwks_/'));
+        $mockCache->shouldReceive('set')->with(
+            \Mockery::pattern('/^jwks_/'),
+            \Mockery::on(fn($v) => is_array($v) && isset($v['keys'])),
+            \Mockery::any()
+        )->once();
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider = new TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => new \League\OAuth2\Client\Tool\RequestFactory(),
+            'cache' => $mockCache,
+        ]);
+
+        // Call getJwks directly with forceRefresh=true
+        $getJwks = \Closure::bind(
+            fn() => $this->getJwks(true),
+            $provider,
+            $provider
+        );
+
+        // Need to set jwksUrl since well-known was loaded from cache
+        $result = $getJwks();
+        self::assertSame($jwksData, $result);
+        // HTTP request was made despite cache
+        self::assertCount(1, $history);
     }
 
     public function testGenerateNonceIsUniqueAcrossCalls(): void
@@ -1070,34 +1187,7 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertSame('UserInfo Name', $owner->toArray()['name']);
     }
 
-    public function testWellKnownInMemoryCacheIsUsedOnSecondConstruction(): void
-    {
-        // First provider loads from network (basicProvider clears cache first)
-        $history1 = [];
-        $provider1 = TestHelper::basicProvider([
-            TestHelper::wellKnownResponse(),
-        ], $history1);
-        self::assertCount(1, $history1); // one HTTP call for well-known
-
-        // Second provider with same issuer — do NOT use basicProvider (it clears cache)
-        $history2 = [];
-        $httpClient2 = TestHelper::httpClient([], $history2);
-        $provider2 = new \Hvatum\OpenIDConnect\Client\Test\TestProvider([
-            'clientId' => 'client-123',
-            'clientSecret' => 'secret-456',
-            'redirectUri' => 'https://app.example/callback',
-            'issuer' => 'https://idp.test',
-            'cacheDir' => sys_get_temp_dir() . '/oauth2-oidc-tests-' . uniqid(),
-        ], [
-            'httpClient' => $httpClient2,
-        ]);
-
-        // No HTTP calls — served from in-memory cache
-        self::assertCount(0, $history2);
-        self::assertSame('https://idp.test', $provider2->getIssuerUrl());
-    }
-
-    public function testWellKnownFileCacheIsUsedWhenInMemoryCacheCleared(): void
+    public function testWellKnownFileCacheIsReusedAcrossProviderInstances(): void
     {
         $cacheDir = sys_get_temp_dir() . '/oauth2-oidc-filecache-' . uniqid();
 
@@ -1116,10 +1206,7 @@ final class OpenIDConnectProviderTest extends TestCase
         ]);
         self::assertCount(1, $history1);
 
-        // Clear in-memory cache
-        \Hvatum\OpenIDConnect\Client\Provider\OpenIDConnectProvider::clearWellKnownCache();
-
-        // Second provider should use file cache
+        // Second provider with same cacheDir should use file cache
         $history2 = [];
         $httpClient2 = TestHelper::httpClient([], $history2);
         $provider2 = new \Hvatum\OpenIDConnect\Client\Test\TestProvider([
@@ -1142,24 +1229,124 @@ final class OpenIDConnectProviderTest extends TestCase
         @rmdir($cacheDir);
     }
 
-    public function testRuntimeUserIdentifierReturnsNonNull(): void
+    public function testWellKnownPsr16CacheExpiresAfterTtl(): void
+    {
+        $cacheDir = sys_get_temp_dir() . '/oauth2-oidc-wellknown-age-' . uniqid();
+        @mkdir($cacheDir, 0700, true);
+        $cache = new \Hvatum\OpenIDConnect\Client\Cache\FilesystemCache($cacheDir);
+
+        $issuer = 'https://age-preservation.test';
+        $wellKnownUrl = $issuer . '/.well-known/openid-configuration';
+        $cacheKey = 'wellknown_' . md5($wellKnownUrl);
+        $cache->set($cacheKey, [
+            'issuer' => $issuer,
+            'authorization_endpoint' => $issuer . '/oauth2/authorize',
+            'token_endpoint' => $issuer . '/oauth2/token',
+            'jwks_uri' => $issuer . '/oauth2/jwks',
+        ], 1);
+
+        $history1 = [];
+        new \Hvatum\OpenIDConnect\Client\Test\TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => $issuer,
+            'wellKnownUrl' => $wellKnownUrl,
+            'cacheDir' => $cacheDir,
+        ], [
+            'httpClient' => TestHelper::httpClient([], $history1),
+            'cache' => $cache,
+        ]);
+
+        self::assertCount(0, $history1, 'first provider should load discovery from PSR-16 cache');
+
+        sleep(2);
+
+        $history2 = [];
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Failed to fetch well-known configuration');
+        new \Hvatum\OpenIDConnect\Client\Test\TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => $issuer,
+            'wellKnownUrl' => $wellKnownUrl,
+            'cacheDir' => $cacheDir,
+        ], [
+            'httpClient' => TestHelper::httpClient([], $history2),
+            'cache' => $cache,
+        ]);
+    }
+
+    public function testDefaultCacheDirIncludesUserNamespace(): void
     {
         $history = [];
         $provider = TestHelper::basicProvider([
             TestHelper::wellKnownResponse(),
         ], $history);
 
-        $getIdentifier = \Closure::bind(
-            fn() => $this->getRuntimeUserIdentifier(),
+        $getCacheDir = \Closure::bind(
+            fn() => $this->getDefaultCacheDir(),
             $provider,
             $provider
         );
 
-        $identifier = $getIdentifier();
+        $dir = $getCacheDir();
 
-        // On any system with posix or USER/USERNAME env, this should return a value
-        self::assertNotNull($identifier);
-        self::assertMatchesRegularExpression('/^(uid:\d+|user:.+)$/', $identifier);
+        // Should be under sys_get_temp_dir()/oauth2-oidc/ with a namespace segment
+        self::assertStringStartsWith(sys_get_temp_dir() . '/oauth2-oidc/', $dir);
+        // The namespace segment should be a sha256 hash or 'default'
+        $namespace = basename($dir);
+        self::assertMatchesRegularExpression('/^([a-f0-9]{64}|default)$/', $namespace);
+    }
+
+    public function testJwksPsr16CacheExpiresAfterTtl(): void
+    {
+        [, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $cacheDir = sys_get_temp_dir() . '/oauth2-oidc-jwks-age-' . uniqid();
+        @mkdir($cacheDir, 0700, true);
+        $cache = new \Hvatum\OpenIDConnect\Client\Cache\FilesystemCache($cacheDir);
+
+        $issuer = 'https://idp.test';
+        $wellKnownUrl = $issuer . '/.well-known/openid-configuration';
+        $jwksUrl = $issuer . '/oauth2/jwks';
+
+        $cache->set('wellknown_' . md5($wellKnownUrl), [
+            'issuer' => $issuer,
+            'authorization_endpoint' => $issuer . '/oauth2/authorize',
+            'token_endpoint' => $issuer . '/oauth2/token',
+            'jwks_uri' => $jwksUrl,
+            'id_token_signing_alg_values_supported' => ['ES256', 'RS256'],
+        ], 3600);
+        $cache->set('jwks_' . md5($jwksUrl), ['keys' => [$jwk]], 1);
+
+        $history = [];
+        $provider = new \Hvatum\OpenIDConnect\Client\Test\TestProvider([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => $issuer,
+            'wellKnownUrl' => $wellKnownUrl,
+            'cacheDir' => $cacheDir,
+        ], [
+            'httpClient' => TestHelper::httpClient([], $history),
+            'cache' => $cache,
+        ]);
+
+        $getJwks = \Closure::bind(
+            fn() => $this->getJwks(false),
+            $provider,
+            $provider
+        );
+
+        self::assertSame(['keys' => [$jwk]], $getJwks(), 'first JWKS read should come from PSR-16 cache');
+
+        sleep(2);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Failed to fetch JWKS');
+        $getJwks();
     }
 
     public function testDiscoveryRejectsNonStringEndpointValue(): void
@@ -1254,32 +1441,22 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertNull($provider->getIdToken());
     }
 
-    public function testDefaultCacheDirIsUsedWhenNoneConfigured(): void
+    public function testProviderCreatesDefaultCacheWhenNoneProvided(): void
     {
         $history = [];
         $provider = TestHelper::basicProvider([
             TestHelper::wellKnownResponse(),
         ], $history);
 
-        // Clear custom cacheDir to test default path
-        $provider->setCacheDir('');
-
-        // Use reflection to null out cacheDir and test getWellKnownCacheDir default
-        $setCacheDir = \Closure::bind(
-            function () { $this->cacheDir = null; },
-            $provider,
-            $provider
-        );
-        $setCacheDir();
-
-        $getCacheDir = \Closure::bind(
-            fn() => $this->getWellKnownCacheDir(),
+        // The provider should have a cache instance even without explicit configuration
+        $getCache = \Closure::bind(
+            fn() => $this->cache,
             $provider,
             $provider
         );
 
-        $dir = $getCacheDir();
-        self::assertStringStartsWith(sys_get_temp_dir() . '/oauth2-oidc/', $dir);
+        $cache = $getCache();
+        self::assertInstanceOf(\Psr\SimpleCache\CacheInterface::class, $cache);
     }
 
     public function testUnsupportedPemKeyTypeThrowsError(): void

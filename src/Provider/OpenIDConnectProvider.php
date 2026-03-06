@@ -37,7 +37,9 @@ use Hvatum\OpenIDConnect\Client\Tool\ClientAssertionTrait;
 use Hvatum\OpenIDConnect\Client\Tool\DPopTrait;
 use Hvatum\OpenIDConnect\Client\Tool\PARTrait;
 use Hvatum\OpenIDConnect\Client\Tool\WellKnownConfigTrait;
+use Hvatum\OpenIDConnect\Client\Cache\FilesystemCache;
 use Hvatum\OpenIDConnect\Client\Validator\NonceChecker;
+use Psr\SimpleCache\CacheInterface;
 
 /**
  * Generic OpenID Connect Provider
@@ -177,10 +179,9 @@ class OpenIDConnectProvider extends AbstractProvider
     protected ?array $validatedIdTokenClaims = null;
 
     /**
-     * Cached JWKS data
+     * JWKS cache TTL in seconds (configurable via options)
      */
-    protected ?array $jwksCache = null;
-    protected ?int $jwksCacheTime = null;
+    protected int $jwksCacheTtl = self::JWKS_CACHE_TTL;
 
     /**
      * Last token request params (for DPoP nonce retry)
@@ -204,10 +205,12 @@ class OpenIDConnectProvider extends AbstractProvider
      * - keyId: Key ID for client assertion
      * - dpopPrivateKeyPath: Path to DPoP private key (RFC 9449)
      * - dpopPublicKeyPath: Path to DPoP public key (RFC 9449)
-     * - cacheDir: Custom cache directory for well-known config
+     * - cacheDir: Custom cache directory (used when no PSR-16 cache is provided)
+     * - wellKnownCacheTtl: Discovery metadata cache TTL in seconds (non-negative integer)
+     * - jwksCacheTtl: JWKS cache TTL in seconds (non-negative integer)
      *
      * @param array $options Provider configuration options
-     * @param array $collaborators Optional collaborators (httpClient, requestFactory, logger)
+     * @param array $collaborators Optional collaborators (httpClient, requestFactory, logger, cache)
      */
     public function __construct(array $options = [], array $collaborators = [])
     {
@@ -225,9 +228,24 @@ class OpenIDConnectProvider extends AbstractProvider
             fn(array $params) => $this->getAccessTokenBody($params)
         ));
 
-        if (isset($options['cacheDir'])) {
-            $this->cacheDir = $options['cacheDir'];
+        // Initialize PSR-16 cache (use provided, or default to filesystem)
+        if (isset($collaborators['cache']) && $collaborators['cache'] instanceof CacheInterface) {
+            $this->cache = $collaborators['cache'];
+        } else {
+            $cacheDir = $options['cacheDir'] ?? $this->getDefaultCacheDir();
+            $this->cache = new FilesystemCache($cacheDir);
         }
+
+        $this->wellKnownCacheTtl = $this->resolveCacheTtlOption(
+            $options,
+            'wellKnownCacheTtl',
+            $this->wellKnownCacheTtl
+        );
+        $this->jwksCacheTtl = $this->resolveCacheTtlOption(
+            $options,
+            'jwksCacheTtl',
+            static::JWKS_CACHE_TTL
+        );
 
         // Derive well-known URL from issuer, or use explicit override
         $this->expectedIssuer = $options['issuer'];
@@ -260,6 +278,52 @@ class OpenIDConnectProvider extends AbstractProvider
                 $options['dpopPublicKeyPath'] ?? null
             );
         }
+    }
+
+    /**
+     * Get default cache directory with per-user namespace.
+     */
+    protected function getDefaultCacheDir(): string
+    {
+        $identifier = null;
+
+        if (function_exists('posix_geteuid')) {
+            $uid = posix_geteuid();
+            if (is_int($uid) && $uid >= 0) {
+                $identifier = 'uid:' . $uid;
+            }
+        }
+
+        if ($identifier === null) {
+            $user = getenv('USER') ?: getenv('USERNAME');
+            if (is_string($user) && $user !== '') {
+                $identifier = 'user:' . $user;
+            }
+        }
+
+        $namespace = $identifier !== null ? hash('sha256', $identifier) : 'default';
+        return sys_get_temp_dir() . '/oauth2-oidc/' . $namespace;
+    }
+
+    /**
+     * Resolve and validate cache TTL option.
+     *
+     * @param array<string,mixed> $options
+     */
+    protected function resolveCacheTtlOption(array $options, string $optionName, int $default): int
+    {
+        if (!array_key_exists($optionName, $options)) {
+            return $default;
+        }
+
+        $value = $options[$optionName];
+        if (!is_int($value) || $value < 0) {
+            throw new \InvalidArgumentException(
+                sprintf('%s must be a non-negative integer number of seconds', $optionName)
+            );
+        }
+
+        return $value;
     }
 
     /**
@@ -1098,19 +1162,22 @@ class OpenIDConnectProvider extends AbstractProvider
     }
 
     /**
-     * Fetch JWKS with basic in-memory caching
+     * Fetch JWKS with PSR-16 caching
      *
      * @return array
      * @throws IdentityProviderException
      */
     protected function getJwks(bool $forceRefresh = false): array
     {
-        if (!$forceRefresh && $this->jwksCache !== null && $this->jwksCacheTime !== null) {
-            if ((time() - $this->jwksCacheTime) < static::JWKS_CACHE_TTL) {
+        // Check PSR-16 cache
+        $cacheKey = 'jwks_' . md5($this->jwksUrl ?? '');
+        if (!$forceRefresh && $this->cache !== null) {
+            $cached = $this->cache->get($cacheKey);
+            if (is_array($cached) && isset($cached['keys']) && is_array($cached['keys'])) {
                 $this->logger->debug('Using cached JWKS', [
-                    'cache_age_seconds' => time() - $this->jwksCacheTime,
+                    'key_count' => count($cached['keys']),
                 ]);
-                return $this->jwksCache;
+                return $cached;
             }
         }
 
@@ -1132,8 +1199,7 @@ class OpenIDConnectProvider extends AbstractProvider
                 throw new IdentityProviderException('Invalid JWKS response format', 0, $response);
             }
 
-            $this->jwksCache = $data;
-            $this->jwksCacheTime = time();
+            $this->cache?->set($cacheKey, $data, $this->jwksCacheTtl);
 
             $this->logger->debug('Fetched fresh JWKS', [
                 'key_count' => count($data['keys']),

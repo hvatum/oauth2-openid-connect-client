@@ -135,12 +135,26 @@ Validates: signature (ES256/384/512, RS256/384/512, PS256/384/512), issuer, audi
 
 ### Caching
 
-Well-known configuration is cached to file (24h TTL) and in memory. Customize the cache directory:
+Well-known configuration and JWKS keys are cached using PSR-16 (SimpleCache). TTL is managed by the cache implementation, so expiry works correctly across PHP-FPM requests.
+
+By default, a built-in filesystem cache is used. You can customize the directory and TTLs:
 
 ```php
 $provider = new OpenIDConnectProvider([
     // ...
-    'cacheDir' => '/path/to/cache',
+    'cacheDir' => '/path/to/cache',          // default: sys_get_temp_dir()/oauth2-oidc/<user-hash>
+    'wellKnownCacheTtl' => 86400,            // default: 86400 (24 hours)
+    'jwksCacheTtl' => 3600,                  // default: 3600 (1 hour)
+]);
+```
+
+Or provide your own PSR-16 cache implementation (e.g. Redis, Memcached):
+
+```php
+$provider = new OpenIDConnectProvider([
+    // ...
+], [
+    'cache' => $yourPsr16Cache, // Must implement Psr\SimpleCache\CacheInterface
 ]);
 ```
 

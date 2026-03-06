@@ -5,29 +5,25 @@ declare(strict_types=1);
 namespace Hvatum\OpenIDConnect\Client\Tool;
 
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
+use Psr\SimpleCache\CacheInterface;
 
 /**
  * Well-Known Configuration Discovery Trait
  *
  * Implements automatic endpoint discovery from OpenID Connect
- * well-known configuration endpoint with file-based caching
+ * well-known configuration endpoint with PSR-16 caching
  */
 trait WellKnownConfigTrait
 {
-    /**
-     * Static in-memory cache for well-known config
-     */
-    protected static array $wellKnownConfigCache = [];
-
     /**
      * Cache TTL in seconds (24 hours)
      */
     protected int $wellKnownCacheTtl = 86400;
 
     /**
-     * Cache directory path
+     * PSR-16 cache instance
      */
-    protected ?string $cacheDir = null;
+    protected ?CacheInterface $cache = null;
 
     /**
      * Load well-known configuration from endpoint
@@ -47,33 +43,15 @@ trait WellKnownConfigTrait
             );
         }
 
-        // Check in-memory cache first
-        if (isset(self::$wellKnownConfigCache[$wellKnownUrl])) {
-            $cachedEntry = self::$wellKnownConfigCache[$wellKnownUrl];
-            if ($this->isFreshInMemoryWellKnownCacheEntry($cachedEntry)) {
-                $config = $cachedEntry['config'];
-                $this->validateWellKnownConfig($config, $expectedIssuer);
-                $this->setEndpointsFromConfig($config);
+        // Check PSR-16 cache
+        $cacheKey = 'wellknown_' . md5($wellKnownUrl);
+        if ($this->cache !== null) {
+            $cachedConfig = $this->cache->get($cacheKey);
+            if (is_array($cachedConfig)) {
+                $this->validateWellKnownConfig($cachedConfig, $expectedIssuer);
+                $this->setEndpointsFromConfig($cachedConfig);
                 return;
             }
-
-            unset(self::$wellKnownConfigCache[$wellKnownUrl]);
-        }
-
-        // Check file cache
-        $cacheFile = $this->getWellKnownCacheFile($wellKnownUrl);
-        $cachedConfig = $this->loadWellKnownFromCache($cacheFile);
-
-        if ($cachedConfig !== null) {
-            $this->validateWellKnownConfig($cachedConfig, $expectedIssuer);
-            $loadedAt = filemtime($cacheFile);
-            self::$wellKnownConfigCache[$wellKnownUrl] = [
-                'config' => $cachedConfig,
-                // Preserve file cache age so in-memory cache does not outlive TTL.
-                'loaded_at' => is_int($loadedAt) ? $loadedAt : time(),
-            ];
-            $this->setEndpointsFromConfig($cachedConfig);
-            return;
         }
 
         // Fetch fresh configuration
@@ -103,11 +81,7 @@ trait WellKnownConfigTrait
             $this->validateWellKnownConfig($config, $expectedIssuer);
 
             // Cache the configuration
-            self::$wellKnownConfigCache[$wellKnownUrl] = [
-                'config' => $config,
-                'loaded_at' => time(),
-            ];
-            $this->saveWellKnownToCache($cacheFile, $config);
+            $this->cache?->set($cacheKey, $config, $this->wellKnownCacheTtl);
 
             // Set endpoints
             $this->setEndpointsFromConfig($config);
@@ -303,159 +277,5 @@ trait WellKnownConfigTrait
         }
 
         return $value;
-    }
-
-    /**
-     * Get cache file path for well-known config
-     *
-     * @param string $wellKnownUrl
-     * @return string
-     */
-    protected function getWellKnownCacheFile(string $wellKnownUrl): string
-    {
-        $cacheDir = $this->getWellKnownCacheDir();
-        $cacheKey = md5($wellKnownUrl);
-        return $cacheDir . '/wellknown_' . $cacheKey . '.json';
-    }
-
-    /**
-     * Get cache directory
-     *
-     * @return string
-     */
-    protected function getWellKnownCacheDir(): string
-    {
-        if ($this->cacheDir !== null) {
-            return $this->cacheDir;
-        }
-
-        // Default to a per-user directory inside system temp
-        return sys_get_temp_dir() . '/oauth2-oidc/' . $this->getCacheNamespace();
-    }
-
-    /**
-     * Derive a namespace so caches are not shared across system users.
-     */
-    protected function getCacheNamespace(): string
-    {
-        $identifier = $this->getRuntimeUserIdentifier();
-        return $identifier !== null ? hash('sha256', $identifier) : 'default';
-    }
-
-    /**
-     * Get runtime user identifier for cache namespacing.
-     */
-    protected function getRuntimeUserIdentifier(): ?string
-    {
-        if (function_exists('posix_geteuid')) {
-            $uid = posix_geteuid();
-            if (is_int($uid) && $uid >= 0) {
-                return 'uid:' . $uid;
-            }
-        }
-
-        $user = getenv('USER');
-        if (is_string($user) && $user !== '') {
-            return 'user:' . $user;
-        }
-
-        $username = getenv('USERNAME');
-        if (is_string($username) && $username !== '') {
-            return 'user:' . $username;
-        }
-
-        return null;
-    }
-
-    /**
-     * Validate structure and TTL of in-memory well-known cache entry.
-     *
-     * @param mixed $entry
-     */
-    protected function isFreshInMemoryWellKnownCacheEntry($entry): bool
-    {
-        if (!is_array($entry)) {
-            return false;
-        }
-
-        if (!isset($entry['config'], $entry['loaded_at'])) {
-            return false;
-        }
-
-        if (!is_array($entry['config']) || !is_int($entry['loaded_at'])) {
-            return false;
-        }
-
-        return (time() - $entry['loaded_at']) <= $this->wellKnownCacheTtl;
-    }
-
-    /**
-     * Set custom cache directory
-     *
-     * @param string $dir
-     */
-    public function setCacheDir(string $dir): void
-    {
-        $this->cacheDir = $dir;
-    }
-
-    /**
-     * Load configuration from cache file
-     *
-     * @param string $cacheFile
-     * @return array|null
-     */
-    protected function loadWellKnownFromCache(string $cacheFile): ?array
-    {
-        if (!file_exists($cacheFile)) {
-            return null;
-        }
-
-        // Check if cache expired
-        $fileTime = filemtime($cacheFile);
-        if ($fileTime === false || (time() - $fileTime) > $this->wellKnownCacheTtl) {
-            @unlink($cacheFile);
-            return null;
-        }
-
-        $content = @file_get_contents($cacheFile);
-        if ($content === false) {
-            return null;
-        }
-
-        $config = json_decode($content, true);
-        if (!is_array($config)) {
-            @unlink($cacheFile);
-            return null;
-        }
-
-        return $config;
-    }
-
-    /**
-     * Save configuration to cache file
-     *
-     * @param string $cacheFile
-     * @param array $config
-     */
-    protected function saveWellKnownToCache(string $cacheFile, array $config): void
-    {
-        $cacheDir = dirname($cacheFile);
-
-        if (!is_dir($cacheDir)) {
-            @mkdir($cacheDir, 0700, true);
-        }
-
-        $content = json_encode($config, JSON_PRETTY_PRINT);
-        @file_put_contents($cacheFile, $content, \LOCK_EX);
-        @chmod($cacheFile, 0600);
-    }
-
-    /**
-     * Clear in-memory well-known cache (mainly for tests)
-     */
-    public static function clearWellKnownCache(): void
-    {
-        self::$wellKnownConfigCache = [];
     }
 }
