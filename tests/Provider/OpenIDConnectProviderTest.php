@@ -343,6 +343,67 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getIdToken();
     }
 
+    public function testGetAccessTokenExtractsIssFromOptions(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'authorization_response_iss_parameter_supported' => true,
+            ]),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        // Pass iss alongside code — should automatically set callbackIssuer
+        $provider->getAccessToken('authorization_code', [
+            'code' => 'auth-code-123',
+            'iss' => 'https://idp.test',
+        ]);
+
+        self::assertSame('https://idp.test', $provider->getCallbackIssuer());
+        self::assertSame($idToken, $provider->getIdToken());
+    }
+
+    public function testGetAccessTokenRejectsIssOptionMismatch(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'authorization_response_iss_parameter_supported' => true,
+            ]),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        // Pass mismatched iss
+        $provider->getAccessToken('authorization_code', [
+            'code' => 'auth-code-123',
+            'iss' => 'https://evil.example.com',
+        ]);
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('Issuer mismatch');
+        $provider->getIdToken();
+    }
+
     public function testGetIdTokenRevalidatesAfterNonceChange(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();

@@ -72,12 +72,12 @@ if ($_GET['state'] !== $_SESSION['oauth2_state']) {
 
 // Restore state from session
 $provider->setNonce($_SESSION['oauth2_nonce']);
-$provider->setCallbackIssuer($_GET['iss'] ?? null); // RFC 9207
 
-// Exchange code for tokens
+// Exchange code for tokens (iss is used for RFC 9207 mix-up attack protection)
 $token = $provider->getAccessToken('authorization_code', [
-    'code' => $_GET['code'],
+    'code'          => $_GET['code'],
     'code_verifier' => $_SESSION['oauth2_pkce'],
+    'iss'           => $_GET['iss'] ?? null,
 ]);
 
 // Get user info (ID token claims merged with userinfo endpoint)

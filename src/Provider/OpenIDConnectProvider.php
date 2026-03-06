@@ -368,6 +368,32 @@ class OpenIDConnectProvider extends AbstractProvider
     }
 
     /**
+     * Get an access token from the authorization code.
+     *
+     * Automatically extracts the RFC 9207 `iss` parameter from options
+     * so callers can pass it alongside `code`:
+     *
+     *     $token = $provider->getAccessToken('authorization_code', [
+     *         'code' => $_GET['code'],
+     *         'iss'  => $_GET['iss'] ?? null,
+     *     ]);
+     *
+     * @param mixed $grant
+     * @param array $options
+     * @return AccessToken
+     */
+    public function getAccessToken($grant, array $options = [])
+    {
+        // Extract RFC 9207 iss parameter before passing to parent
+        if (array_key_exists('iss', $options)) {
+            $this->setCallbackIssuer($options['iss']);
+            unset($options['iss']);
+        }
+
+        return parent::getAccessToken($grant, $options);
+    }
+
+    /**
      * Add DPoP proof when fetching access tokens
      *
      * @param array $params
@@ -903,8 +929,8 @@ class OpenIDConnectProvider extends AbstractProvider
     /**
      * Set callback issuer from authorization response (RFC 9207)
      *
-     * This should be set from $_GET['iss'] in your callback handler.
-     * It will be validated against the expected issuer in validateIdToken().
+     * Automatically set when passing 'iss' in getAccessToken() options.
+     * Can also be called manually if needed before getIdToken()/validateIdToken().
      *
      * @param string|null $issuer
      */
