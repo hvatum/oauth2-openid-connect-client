@@ -1017,6 +1017,30 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertArrayNotHasKey('request_uri', $params);
     }
 
+    public function testAuthorizationWithoutPARIncludesDpopThumbprintWhenConfigured(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse([
+                'pushed_authorization_request_endpoint' => null,
+            ]),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $url = $provider->getAuthorizationUrl();
+
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+
+        self::assertSame($provider->getDPopJwkThumbprint(), $params['dpop_jkt']);
+    }
+
     public function testAuthorizationWithPAROnlyContainsClientIdAndRequestUri(): void
     {
         $history = [];
@@ -1040,6 +1064,33 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertArrayNotHasKey('code_challenge', $params);
         self::assertArrayNotHasKey('redirect_uri', $params);
         self::assertArrayNotHasKey('client_secret', $params);
+    }
+
+    public function testAuthorizationWithPARPushesDpopThumbprintWhenConfigured(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse('urn:ietf:params:oauth:request_uri:dpop-123'),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $url = $provider->getAuthorizationUrl();
+
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+        self::assertSame('urn:ietf:params:oauth:request_uri:dpop-123', $params['request_uri']);
+        self::assertArrayNotHasKey('dpop_jkt', $params);
+
+        $parBody = (string)$history[1]['request']->getBody();
+        parse_str($parBody, $parParams);
+        self::assertSame($provider->getDPopJwkThumbprint(), $parParams['dpop_jkt']);
     }
 
     public function testCheckResponseThrowsOnErrorInSuccessStatusBody(): void

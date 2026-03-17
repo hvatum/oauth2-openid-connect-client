@@ -10,7 +10,7 @@ use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 
 final class DPopTraitTest extends TestCase
 {
-    public function testTokenRequestIncludesDpopProofAndThumbprint(): void
+    public function testTokenRequestIncludesDpopProof(): void
     {
         [$privateKey, $publicKey, $jwk] = TestHelper::generateEcKeyPair();
         $privPath = TestHelper::createTempKeyFile($privateKey);
@@ -28,9 +28,11 @@ final class DPopTraitTest extends TestCase
         $provider->setPkceCode('test-verifier');
         $tokenRequest = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
 
+        // dpop_jkt must NOT be in the token request body (RFC 9449 — it belongs in the
+        // authorization request only; token endpoint binding is done via the DPoP header)
         $body = (string)$tokenRequest->getBody();
         parse_str($body, $params);
-        self::assertSame($provider->getDPopJwkThumbprint(), $params['dpop_jkt']);
+        self::assertArrayNotHasKey('dpop_jkt', $params, 'dpop_jkt must not be sent to the token endpoint');
 
         $dpopHeader = $tokenRequest->getHeaderLine('DPoP');
         self::assertNotEmpty($dpopHeader);

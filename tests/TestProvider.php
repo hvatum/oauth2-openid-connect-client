@@ -37,10 +37,6 @@ class TestProvider extends OpenIDConnectProvider
 
         $params = $grant->prepareRequestParameters($params, $options);
 
-        if ($this->hasDPoP() && !isset($params['dpop_jkt'])) {
-            $params['dpop_jkt'] = $this->getDPopJwkThumbprint();
-        }
-
         return $this->debugAccessTokenRequest($params);
     }
 

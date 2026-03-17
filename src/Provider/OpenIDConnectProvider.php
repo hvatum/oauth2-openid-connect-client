@@ -439,8 +439,7 @@ class OpenIDConnectProvider extends AbstractProvider
     /**
      * Build access token request body
      *
-     * Adds client assertion, DPoP thumbprint, authorization_details (RFC 9396),
-     * and handles formatting.
+     * Adds client assertion, authorization_details (RFC 9396), and handles formatting.
      *
      * @param array $params
      * @return string
@@ -485,11 +484,6 @@ class OpenIDConnectProvider extends AbstractProvider
             } finally {
                 $this->setClientAuthorizationDetails($previousAuthorizationDetails);
             }
-        }
-
-        // Add DPoP key thumbprint for token binding
-        if ($this->hasDPoP() && !isset($params['dpop_jkt'])) {
-            $params['dpop_jkt'] = $this->getDPopJwkThumbprint();
         }
 
         // Join scope array with separator (parent doesn't handle this)
@@ -714,6 +708,10 @@ class OpenIDConnectProvider extends AbstractProvider
 
         // RFC 9396: authorization_details in authorization and PAR requests is JSON.
         $params = $this->normalizeAuthorizationDetailsParameter($params);
+
+        if ($this->hasDPoP() && !isset($params['dpop_jkt'])) {
+            $params['dpop_jkt'] = $this->getDPopJwkThumbprint();
+        }
 
         // Validate PKCE method against server's advertised list
         if ($this->codeChallengeMethodsSupported !== null
