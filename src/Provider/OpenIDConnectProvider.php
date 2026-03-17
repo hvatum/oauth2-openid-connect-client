@@ -709,7 +709,7 @@ class OpenIDConnectProvider extends AbstractProvider
         // RFC 9396: authorization_details in authorization and PAR requests is JSON.
         $params = $this->normalizeAuthorizationDetailsParameter($params);
 
-        if ($this->hasDPoP() && !isset($params['dpop_jkt'])) {
+        if ($this->shouldSendDpopJktInAuthorizationRequest() && !isset($params['dpop_jkt'])) {
             $params['dpop_jkt'] = $this->getDPopJwkThumbprint();
         }
 
@@ -735,6 +735,17 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         return $params;
+    }
+
+    /**
+     * Determine whether authorization requests should include dpop_jkt.
+     *
+     * Override in provider-specific subclasses when an authorization server's
+     * interoperability profile rejects dpop_jkt on front-channel auth or PAR.
+     */
+    protected function shouldSendDpopJktInAuthorizationRequest(): bool
+    {
+        return $this->hasDPoP();
     }
 
     /**

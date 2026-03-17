@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Hvatum\OpenIDConnect\Client\Test\IssuerAudienceTestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestProvider;
+use League\OAuth2\Client\Tool\RequestFactory;
 
 final class OpenIDConnectProviderTest extends TestCase
 {
@@ -1091,6 +1092,47 @@ final class OpenIDConnectProviderTest extends TestCase
         $parBody = (string)$history[1]['request']->getBody();
         parse_str($parBody, $parParams);
         self::assertSame($provider->getDPopJwkThumbprint(), $parParams['dpop_jkt']);
+    }
+
+    public function testAuthorizationWithPARCanDisableDpopThumbprintInjection(): void
+    {
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $httpClient = TestHelper::httpClient([
+            TestHelper::wellKnownResponse(),
+            TestHelper::parResponse('urn:ietf:params:oauth:request_uri:no-dpop-jkt'),
+        ], $history);
+
+        $provider = new class([
+            'clientId' => 'client-123',
+            'clientSecret' => 'secret-456',
+            'redirectUri' => 'https://app.example/callback',
+            'issuer' => 'https://idp.test',
+            'cacheDir' => sys_get_temp_dir() . '/oauth2-oidc-tests-' . uniqid(),
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ], [
+            'httpClient' => $httpClient,
+            'requestFactory' => new RequestFactory(),
+        ]) extends TestProvider {
+            protected function shouldSendDpopJktInAuthorizationRequest(): bool
+            {
+                return false;
+            }
+        };
+
+        $url = $provider->getAuthorizationUrl();
+
+        $parsed = parse_url($url);
+        parse_str($parsed['query'], $params);
+        self::assertSame('urn:ietf:params:oauth:request_uri:no-dpop-jkt', $params['request_uri']);
+
+        $parBody = (string)$history[1]['request']->getBody();
+        parse_str($parBody, $parParams);
+        self::assertArrayNotHasKey('dpop_jkt', $parParams);
     }
 
     public function testCheckResponseThrowsOnErrorInSuccessStatusBody(): void
