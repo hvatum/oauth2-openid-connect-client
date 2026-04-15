@@ -705,15 +705,9 @@ final class DPopTraitTest extends TestCase
      */
     public function testWrongTypedDpopOptionThrowsAtConstruction(mixed $value, string $optionName): void
     {
-        // For dpopPublicKey/dpopPublicKeyPath the test must also supply a
-        // valid private key — otherwise the helper short-circuits before
-        // looking at the public option.
-        $extras = [];
-        if (in_array($optionName, ['dpopPublicKey', 'dpopPublicKeyPath'], true)) {
-            [$privateKeyPem] = TestHelper::generateEcKeyPair();
-            $extras['dpopPrivateKeyPath'] = TestHelper::createTempKeyFile($privateKeyPem);
-        }
-
+        // The constructor now validates the public DPoP options upfront (no
+        // longer gated on a configured private key), so all four options
+        // fail-fast on wrong types regardless of what the others contain.
         $history = [];
 
         $this->expectException(\InvalidArgumentException::class);
@@ -721,6 +715,43 @@ final class DPopTraitTest extends TestCase
 
         TestHelper::fullProvider([
             TestHelper::wellKnownResponse(),
-        ], $history, array_merge($extras, [$optionName => $value]));
+        ], $history, [$optionName => $value]);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function orphanPublicKeyOptionProvider(): array
+    {
+        return [
+            'dpopPublicKey raw content alone' => ['dpopPublicKey'],
+            'dpopPublicKeyPath alone' => ['dpopPublicKeyPath'],
+        ];
+    }
+
+    /**
+     * @dataProvider orphanPublicKeyOptionProvider
+     */
+    public function testOrphanedDpopPublicKeyThrowsAtConstruction(string $optionName): void
+    {
+        // Configuring a public DPoP key without a corresponding private key is
+        // a misconfiguration: the public key alone cannot sign proofs. The old
+        // constructor silently dropped these on the floor.
+        [$privateKeyPem, $publicKeyPem] = TestHelper::generateEcKeyPair();
+        $value = $optionName === 'dpopPublicKeyPath'
+            ? TestHelper::createTempKeyFile($publicKeyPem)
+            : $publicKeyPem;
+
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage(
+            '`dpopPublicKey` / `dpopPublicKeyPath` requires a corresponding '
+            . '`dpopPrivateKey` / `dpopPrivateKeyPath`'
+        );
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [$optionName => $value]);
     }
 }

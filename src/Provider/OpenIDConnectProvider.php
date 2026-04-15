@@ -292,18 +292,28 @@ class OpenIDConnectProvider extends AbstractProvider
             );
         }
 
-        // Optional: Initialize DPoP (public key derived from private key if not provided).
+        // Optional: Initialize DPoP. Resolve BOTH options upfront so wrong
+        // types fail-fast even when only the public side is misconfigured —
+        // otherwise the public option would never be inspected at all.
         $dpopPrivateContent = self::resolveKeyMaterialOption(
             $options,
             'dpopPrivateKey',
             'dpopPrivateKeyPath'
         );
-        if ($dpopPrivateContent !== null) {
-            $dpopPublicContent = self::resolveKeyMaterialOption(
-                $options,
-                'dpopPublicKey',
-                'dpopPublicKeyPath'
+        $dpopPublicContent = self::resolveKeyMaterialOption(
+            $options,
+            'dpopPublicKey',
+            'dpopPublicKeyPath'
+        );
+        if ($dpopPrivateContent === null && $dpopPublicContent !== null) {
+            throw new \InvalidArgumentException(
+                '`dpopPublicKey` / `dpopPublicKeyPath` requires a corresponding '
+                . '`dpopPrivateKey` / `dpopPrivateKeyPath` — a public key alone '
+                . 'cannot sign DPoP proofs.'
             );
+        }
+        if ($dpopPrivateContent !== null) {
+            // Public key may be omitted; the trait derives it from the private key.
             $this->initializeDPoP($dpopPrivateContent, $dpopPublicContent);
         }
     }
