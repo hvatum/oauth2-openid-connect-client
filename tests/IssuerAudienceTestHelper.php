@@ -14,8 +14,8 @@ final class IssuerAudienceTestHelper
 {
     public static function fullProvider(array $responses, array &$history, array $options = []): IssuerAudienceTestProvider
     {
-        // Auto-generate client assertion key if not provided
-        if (!isset($options['privateKeyPath'])) {
+        // Auto-generate client assertion key if neither option is provided
+        if (!isset($options['privateKeyPath']) && !isset($options['privateKey'])) {
             [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
             $resource = openssl_pkey_get_private($privateKey);
             $details = openssl_pkey_get_details($resource);
@@ -24,8 +24,12 @@ final class IssuerAudienceTestHelper
             $options['privateKeyPath'] = TestHelper::createTempKeyFile(json_encode($jwk));
         }
 
-        // Auto-generate DPoP keys if not provided
-        if (!isset($options['dpopPrivateKeyPath']) || !isset($options['dpopPublicKeyPath'])) {
+        // Auto-generate DPoP keys ONLY when nothing is configured. See the
+        // matching note in TestHelper::fullProvider — partial injection would
+        // mask the derive-from-private path and create mismatched key pairs.
+        $dpopPrivateConfigured = isset($options['dpopPrivateKeyPath']) || isset($options['dpopPrivateKey']);
+        $dpopPublicConfigured = isset($options['dpopPublicKeyPath']) || isset($options['dpopPublicKey']);
+        if (!$dpopPrivateConfigured && !$dpopPublicConfigured) {
             [$dpopPriv, $dpopPub, ] = TestHelper::generateEcKeyPair();
             $options['dpopPrivateKeyPath'] = TestHelper::createTempKeyFile($dpopPriv);
             $options['dpopPublicKeyPath'] = TestHelper::createTempKeyFile($dpopPub);

@@ -104,6 +104,27 @@ $provider = new OpenIDConnectProvider([
 
 Supports EC (ES256/ES384/ES512) and RSA (RS256/RS384/RS512, PS256/PS384/PS512) keys in both PEM and JWK formats.
 
+#### Loading keys from environment variables
+
+For 12-factor / Kubernetes-style deployments where the key is injected via an
+environment variable rather than mounted on disk, use `privateKey` to pass the
+raw PEM or JWK JSON content directly:
+
+```php
+$provider = new OpenIDConnectProvider([
+    'clientId'   => 'your-client-id',
+    'issuer'     => 'https://your-idp.example',
+    'privateKey' => getenv('OIDC_CLIENT_PRIVATE_KEY'), // raw PEM or JWK JSON
+    'keyId'      => 'your-key-id',
+]);
+```
+
+`privateKey` (raw content) and `privateKeyPath` (filesystem path) are mutually
+exclusive — setting both throws an `InvalidArgumentException` at construction.
+An empty string is treated as unset, so an unset env var bound to `''` falls
+back to a configured `privateKeyPath` rather than silently disabling client
+assertion.
+
 ### DPoP Token Binding (RFC 9449)
 
 Bind access tokens to a cryptographic key pair to prevent token theft:
@@ -122,6 +143,13 @@ $provider = new OpenIDConnectProvider([
 // For API calls with DPoP-bound tokens:
 $response = $provider->makeDPopRequest('GET', 'https://api.example/resource', $token->getToken());
 ```
+
+DPoP keys follow the same contract as `privateKey` / `privateKeyPath`:
+`dpopPrivateKey` and `dpopPublicKey` accept raw PEM/JWK content for env-var
+deployments, while `dpopPrivateKeyPath` and `dpopPublicKeyPath` accept
+filesystem paths. Each `*Key` option is mutually exclusive with its `*KeyPath`
+counterpart. The public key may be omitted entirely — it is derived from the
+private key.
 
 ### ID Token Validation
 

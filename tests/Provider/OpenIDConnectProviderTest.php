@@ -1615,12 +1615,8 @@ final class OpenIDConnectProviderTest extends TestCase
 
     public function testUnsupportedPemKeyTypeThrowsError(): void
     {
-        // Generate a DSA-like key that will have an unsupported kty — use an OKP (Ed25519)
-        // Instead, we can test with a symmetric key PEM which isn't EC or RSA
-        // The simplest approach: provide a valid EC PEM but mock the kty check
-        // Actually, loadJwkFromPem only rejects non-EC/non-RSA kty values.
-        // OKP keys from JWKFactory would produce kty=OKP which is unsupported.
-        // Let's use sodium to generate an Ed25519 key if available, otherwise skip.
+        // Feed an Ed25519 (OKP) PEM to client assertion. The post-processor
+        // only accepts EC and RSA, so OKP must be rejected.
         if (!function_exists('sodium_crypto_sign_keypair')) {
             self::markTestSkipped('sodium extension required');
         }
@@ -1647,7 +1643,7 @@ final class OpenIDConnectProviderTest extends TestCase
         ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Unsupported key type in PEM');
+        $this->expectExceptionMessage('Unsupported key type');
 
         $provider->debugAccessTokenRequestFromGrant('client_credentials');
     }

@@ -94,8 +94,8 @@ final class TestHelper
      */
     public static function fullProvider(array $responses, array &$history, array $options = []): TestProvider
     {
-        // Auto-generate client assertion key if not provided
-        if (!isset($options['privateKeyPath'])) {
+        // Auto-generate client assertion key if neither option is provided
+        if (!isset($options['privateKeyPath']) && !isset($options['privateKey'])) {
             [$privateKey, , $jwk] = self::generateEcKeyPair();
             $resource = openssl_pkey_get_private($privateKey);
             $details = openssl_pkey_get_details($resource);
@@ -104,8 +104,14 @@ final class TestHelper
             $options['privateKeyPath'] = self::createTempKeyFile(json_encode($jwk));
         }
 
-        // Auto-generate DPoP keys if not provided
-        if (!isset($options['dpopPrivateKeyPath']) || !isset($options['dpopPublicKeyPath'])) {
+        // Auto-generate DPoP keys ONLY when nothing is configured. If a test
+        // supplies just one side, leave it alone — generating an unrelated
+        // counterpart key would mask the library's derive-public-from-private
+        // path and produce structurally-valid-but-cryptographically-broken
+        // proofs (signed by key A, carrying public key B in the jwk header).
+        $dpopPrivateConfigured = isset($options['dpopPrivateKeyPath']) || isset($options['dpopPrivateKey']);
+        $dpopPublicConfigured = isset($options['dpopPublicKeyPath']) || isset($options['dpopPublicKey']);
+        if (!$dpopPrivateConfigured && !$dpopPublicConfigured) {
             [$dpopPriv, $dpopPub, ] = self::generateEcKeyPair();
             $options['dpopPrivateKeyPath'] = self::createTempKeyFile($dpopPriv);
             $options['dpopPublicKeyPath'] = self::createTempKeyFile($dpopPub);

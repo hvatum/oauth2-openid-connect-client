@@ -27,14 +27,15 @@ use Psr\Http\Message\UriInterface;
 trait DPopTrait
 {
     /**
-     * DPoP private key path
+     * Resolved raw DPoP private key material (PEM or JWK JSON).
      */
-    protected ?string $dpopPrivateKeyPath = null;
+    protected ?string $dpopPrivateKeyContent = null;
 
     /**
-     * DPoP public key path
+     * Resolved raw DPoP public key material (PEM or JWK JSON), or null to
+     * derive from the private key.
      */
-    protected ?string $dpopPublicKeyPath = null;
+    protected ?string $dpopPublicKeyContent = null;
 
     /**
      * Cached DPoP private JWK
@@ -52,15 +53,20 @@ trait DPopTrait
     protected ?string $dpopNonce = null;
 
     /**
-     * Initialize DPoP with key pair
+     * Initialize DPoP with raw key content.
      *
-     * @param string $privateKeyPath Path to PEM-encoded EC private key
-     * @param string|null $publicKeyPath Path to PEM-encoded EC public key (optional, derived from private key if null)
+     * Callers pass already-loaded PEM or JWK content. The provider constructor
+     * is responsible for reading filesystem paths via the `dpopPrivateKeyPath` /
+     * `dpopPublicKeyPath` options before reaching this method.
+     *
+     * @param string $privateKeyContent Raw PEM or JWK EC private key content
+     * @param string|null $publicKeyContent Raw PEM or JWK EC public key content
+     *        (optional, derived from private key if null)
      */
-    protected function initializeDPoP(string $privateKeyPath, ?string $publicKeyPath = null): void
+    protected function initializeDPoP(string $privateKeyContent, ?string $publicKeyContent = null): void
     {
-        $this->dpopPrivateKeyPath = $privateKeyPath;
-        $this->dpopPublicKeyPath = $publicKeyPath;
+        $this->dpopPrivateKeyContent = $privateKeyContent;
+        $this->dpopPublicKeyContent = $publicKeyContent;
     }
 
     /**
@@ -71,7 +77,7 @@ trait DPopTrait
      */
     protected function hasDPoP(): bool
     {
-        return $this->dpopPrivateKeyPath !== null;
+        return $this->dpopPrivateKeyContent !== null;
     }
 
     /**
@@ -91,7 +97,10 @@ trait DPopTrait
         ?string $nonce = null
     ): string {
         if (!$this->hasDPoP()) {
-            throw new \RuntimeException('DPoP not configured');
+            throw new \LogicException(
+                'DPoP is not configured on this provider instance — supply `dpopPrivateKey` '
+                . 'or `dpopPrivateKeyPath` at construction to enable DPoP-bound requests'
+            );
         }
 
         // Validate ES256 against server's advertised DPoP algorithms (if available)
@@ -191,13 +200,14 @@ trait DPopTrait
             return $this->dpopPrivateJwk;
         }
 
-        if (!file_exists($this->dpopPrivateKeyPath)) {
-            throw new \RuntimeException(
-                "DPoP private key file not found: {$this->dpopPrivateKeyPath}"
+        if ($this->dpopPrivateKeyContent === null) {
+            throw new \LogicException(
+                'DPoP is not configured on this provider instance — supply `dpopPrivateKey` '
+                . 'or `dpopPrivateKeyPath` at construction to enable DPoP-bound requests'
             );
         }
 
-        $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKeyFile($this->dpopPrivateKeyPath);
+        $jwk = KeyMaterialParser::parseToJwk($this->dpopPrivateKeyContent, 'DPoP private key');
 
         if ($jwk->get('kty') !== 'EC') {
             throw new \RuntimeException('DPoP private key must be EC type');
@@ -219,14 +229,9 @@ trait DPopTrait
             return $this->dpopPublicKeyJwk;
         }
 
-        if ($this->dpopPublicKeyPath !== null) {
-            // Load from explicit public key file
-            if (!file_exists($this->dpopPublicKeyPath)) {
-                throw new \RuntimeException(
-                    "DPoP public key file not found: {$this->dpopPublicKeyPath}"
-                );
-            }
-            $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKeyFile($this->dpopPublicKeyPath);
+        if ($this->dpopPublicKeyContent !== null) {
+            // Load from explicit public key material (resolved upstream by the provider)
+            $jwk = KeyMaterialParser::parseToJwk($this->dpopPublicKeyContent, 'DPoP public key');
         } else {
             // Derive from private key (private EC JWK contains all public components)
             $jwk = $this->getDPopPrivateJwk();

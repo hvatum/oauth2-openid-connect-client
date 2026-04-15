@@ -201,10 +201,16 @@ class OpenIDConnectProvider extends AbstractProvider
      *
      * Optional options:
      * - wellKnownUrl: Override the auto-derived well-known URL (for non-standard paths)
-     * - privateKeyPath: Path to private key for client assertion (RFC 7523)
+     * - privateKeyPath: Filesystem path to a PEM or JWK private key file for
+     *   client assertion (RFC 7523).
+     * - privateKey: Raw PEM or JWK JSON private key content for client assertion
+     *   — for env-var / Kubernetes-style deployments where keys are not on disk.
+     *   Mutually exclusive with privateKeyPath; setting both throws.
      * - keyId: Key ID for client assertion
-     * - dpopPrivateKeyPath: Path to DPoP private key (RFC 9449)
-     * - dpopPublicKeyPath: Path to DPoP public key (RFC 9449)
+     * - dpopPrivateKeyPath / dpopPublicKeyPath: Filesystem paths to PEM/JWK
+     *   DPoP key files (RFC 9449).
+     * - dpopPrivateKey / dpopPublicKey: Raw PEM/JWK content for DPoP keys.
+     *   Each *Key option is mutually exclusive with its *KeyPath counterpart.
      * - cacheDir: Custom cache directory (used when no PSR-16 cache is provided)
      * - wellKnownCacheTtl: Discovery metadata cache TTL in seconds (non-negative integer)
      * - jwksCacheTtl: JWKS cache TTL in seconds (non-negative integer)
@@ -259,25 +265,134 @@ class OpenIDConnectProvider extends AbstractProvider
         ]);
 
         // Optional: Disable strict RFC 9207 enforcement
-        if (isset($options['enforceIssuerIdentification'])) {
-            $this->enforceIssuerIdentification = (bool) $options['enforceIssuerIdentification'];
+        if (array_key_exists('enforceIssuerIdentification', $options)) {
+            $value = $options['enforceIssuerIdentification'];
+            if (!is_bool($value)) {
+                throw new \InvalidArgumentException(sprintf(
+                    '`enforceIssuerIdentification` must be a bool, got %s',
+                    get_debug_type($value)
+                ));
+            }
+            $this->enforceIssuerIdentification = $value;
         }
 
-        // Optional: Initialize client assertion (private_key_jwt)
-        if (!empty($options['privateKeyPath'])) {
+        // Optional: Initialize client assertion (private_key_jwt). `privateKey`
+        // and `privateKeyPath` are mutually exclusive; the helper resolves to
+        // raw key content (reading the file when given a path) and the trait
+        // never sees a path at all.
+        $clientAssertionContent = self::resolveKeyMaterialOption(
+            $options,
+            'privateKey',
+            'privateKeyPath'
+        );
+        if ($clientAssertionContent !== null) {
             $this->initializeClientAssertion(
-                $options['privateKeyPath'],
-                $options['keyId'] ?? null
+                $clientAssertionContent,
+                self::extractStringOption($options, 'keyId')
             );
         }
 
-        // Optional: Initialize DPoP (public key is derived from private key if not provided)
-        if (!empty($options['dpopPrivateKeyPath'])) {
-            $this->initializeDPoP(
-                $options['dpopPrivateKeyPath'],
-                $options['dpopPublicKeyPath'] ?? null
+        // Optional: Initialize DPoP (public key derived from private key if not provided).
+        $dpopPrivateContent = self::resolveKeyMaterialOption(
+            $options,
+            'dpopPrivateKey',
+            'dpopPrivateKeyPath'
+        );
+        if ($dpopPrivateContent !== null) {
+            $dpopPublicContent = self::resolveKeyMaterialOption(
+                $options,
+                'dpopPublicKey',
+                'dpopPublicKeyPath'
             );
+            $this->initializeDPoP($dpopPrivateContent, $dpopPublicContent);
         }
+    }
+
+    /**
+     * Resolve a pair of mutually-exclusive raw / path key options into raw content.
+     *
+     * Empty strings and explicit nulls are treated as unset (typical for unset
+     * env vars). Setting both options throws. Wrong-typed values throw rather
+     * than silently disabling auth. A path option is read at construction so
+     * file problems surface fast.
+     *
+     * @param array<string,mixed> $options
+     * @return string|null Raw key content, or null if neither option is set
+     */
+    private static function resolveKeyMaterialOption(
+        array $options,
+        string $rawOption,
+        string $pathOption
+    ): ?string {
+        $raw = self::extractStringOption($options, $rawOption);
+        $path = self::extractStringOption($options, $pathOption);
+
+        if ($raw !== null && $path !== null) {
+            throw new \InvalidArgumentException(sprintf(
+                'Provide either `%s` (raw PEM/JWK content) or `%s` (filesystem path), not both.',
+                $rawOption,
+                $pathOption
+            ));
+        }
+
+        if ($raw !== null) {
+            return $raw;
+        }
+
+        if ($path === null) {
+            return null;
+        }
+
+        if (!is_file($path)) {
+            throw new \InvalidArgumentException(sprintf(
+                '`%s` must be a readable file: %s',
+                $pathOption,
+                $path
+            ));
+        }
+
+        $content = @file_get_contents($path);
+        if ($content === false) {
+            throw new \InvalidArgumentException(sprintf(
+                'Failed to read `%s` file: %s',
+                $pathOption,
+                $path
+            ));
+        }
+
+        return $content;
+    }
+
+    /**
+     * Extract a non-empty string from a constructor option, fail-fast on type
+     * confusion.
+     *
+     * Returns null when the option is unset, explicitly null, or an empty
+     * string — empty is treated as unset so deployments can write
+     * `'foo' => getenv('BAR') ?: ''` without silently disabling features. Any
+     * other type throws InvalidArgumentException: silently coercing an array
+     * or int to "absent" can downgrade auth in production deployments where
+     * a typo in env-var plumbing would otherwise go unnoticed.
+     *
+     * @param array<string,mixed> $options
+     */
+    private static function extractStringOption(array $options, string $key): ?string
+    {
+        if (!array_key_exists($key, $options)) {
+            return null;
+        }
+        $value = $options[$key];
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_string($value)) {
+            throw new \InvalidArgumentException(sprintf(
+                '`%s` must be a string, got %s',
+                $key,
+                get_debug_type($value)
+            ));
+        }
+        return $value;
     }
 
     /**

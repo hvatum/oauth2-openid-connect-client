@@ -486,4 +486,241 @@ final class DPopTraitTest extends TestCase
         $dpopHeader = $request->getHeaderLine('DPoP');
         self::assertNotEmpty($dpopHeader);
     }
+
+    public function testRawPemViaDpopPrivateKeyOption(): void
+    {
+        [$privateKeyPem, $publicKeyPem] = TestHelper::generateEcKeyPair();
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKey' => $privateKeyPem,
+            'dpopPublicKey' => $publicKeyPem,
+        ]);
+
+        $provider->setPkceCode('test-verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $dpopHeader = $request->getHeaderLine('DPoP');
+        self::assertNotEmpty($dpopHeader, 'DPoP proof should be emitted when key loaded from raw PEM');
+    }
+
+    public function testDpopPrivateKeyAndPathAreMutuallyExclusive(): void
+    {
+        [$privateKeyPem] = TestHelper::generateEcKeyPair();
+        $path = TestHelper::createTempKeyFile($privateKeyPem);
+
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Provide either `dpopPrivateKey` (raw PEM/JWK content) or `dpopPrivateKeyPath` (filesystem path), not both');
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'dpopPrivateKey' => $privateKeyPem,
+            'dpopPrivateKeyPath' => $path,
+        ]);
+    }
+
+    public function testDpopPublicKeyAndPathAreMutuallyExclusive(): void
+    {
+        [$privateKeyPem, $publicKeyPem] = TestHelper::generateEcKeyPair();
+        $publicPath = TestHelper::createTempKeyFile($publicKeyPem);
+
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Provide either `dpopPublicKey` (raw PEM/JWK content) or `dpopPublicKeyPath` (filesystem path), not both');
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'dpopPrivateKey' => $privateKeyPem,
+            'dpopPublicKey' => $publicKeyPem,
+            'dpopPublicKeyPath' => $publicPath,
+        ]);
+    }
+
+    public function testMissingDpopPrivateKeyFileThrowsAtConstruction(): void
+    {
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('`dpopPrivateKeyPath` must be a readable file');
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'dpopPrivateKeyPath' => '/tmp/does-not-exist-' . bin2hex(random_bytes(8)),
+        ]);
+    }
+
+    public function testEmptyDpopPrivateKeyAliasFallsBackToPath(): void
+    {
+        // Empty alias must NOT silently disable DPoP when a valid *Path is set.
+        [$privateKeyPem] = TestHelper::generateEcKeyPair();
+        $path = TestHelper::createTempKeyFile($privateKeyPem);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKey' => '',
+            'dpopPrivateKeyPath' => $path,
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        self::assertNotEmpty(
+            $request->getHeaderLine('DPoP'),
+            'Empty alias must not silently disable DPoP when path fallback is configured'
+        );
+    }
+
+    public function testJwkSetRejectedAsDpopPrivateKey(): void
+    {
+        // {"keys":[...]} parses to JWKSet — must surface a useful error rather
+        // than crash on the JWK return type.
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwks = json_encode(['keys' => [$jwk]]);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKey' => $jwks,
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('DPoP private key: must be a single JWK, not a JWK set');
+
+        $provider->setPkceCode('verifier');
+        $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+    }
+
+    public function testDpopPublicKeyDerivedFromPrivateWhenOmitted(): void
+    {
+        // RFC 9449 §4.2: when the public key is omitted, the library must
+        // derive it from the private key's curve points and embed THAT in the
+        // proof's `jwk` header. Verify the embedded x/y match the private
+        // key's public coordinates — a regression here would mean either the
+        // derivation is wrong or the test scaffold is silently injecting an
+        // unrelated public key.
+        [$privateKeyPem] = TestHelper::generateEcKeyPair();
+        $privateResource = openssl_pkey_get_private($privateKeyPem);
+        $details = openssl_pkey_get_details($privateResource);
+        $expectedX = rtrim(strtr(base64_encode($details['ec']['x']), '+/', '-_'), '=');
+        $expectedY = rtrim(strtr(base64_encode($details['ec']['y']), '+/', '-_'), '=');
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKey' => $privateKeyPem,
+            // dpopPublicKey deliberately omitted
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $dpopHeader = $request->getHeaderLine('DPoP');
+        self::assertNotEmpty($dpopHeader);
+
+        // Decode the JWT header (first segment of compact serialization)
+        $headerB64 = explode('.', $dpopHeader)[0];
+        $decoded = json_decode(base64_decode(strtr($headerB64, '-_', '+/')), true);
+
+        self::assertIsArray($decoded['jwk'] ?? null, 'DPoP proof must embed jwk in header');
+        self::assertSame('EC', $decoded['jwk']['kty']);
+        self::assertSame($expectedX, $decoded['jwk']['x'], 'Derived public key x must match private key');
+        self::assertSame($expectedY, $decoded['jwk']['y'], 'Derived public key y must match private key');
+    }
+
+    public function testJwkSetRejectedAsDpopPublicKey(): void
+    {
+        // The public-key code path uses the same JWK builder as the private one;
+        // the error message must point at `DPoP public key`, not the private one.
+        [$privateKeyPem, , $jwk] = TestHelper::generateEcKeyPair();
+        $jwks = json_encode(['keys' => [$jwk]]);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKey' => $privateKeyPem,
+            'dpopPublicKey' => $jwks,
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('DPoP public key: must be a single JWK, not a JWK set');
+
+        $provider->setPkceCode('verifier');
+        $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+    }
+
+    public function testBomPrefixedRawDpopPemAccepted(): void
+    {
+        [$privateKeyPem] = TestHelper::generateEcKeyPair();
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'dpopPrivateKey' => "\xEF\xBB\xBF" . $privateKeyPem,
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        self::assertNotEmpty($request->getHeaderLine('DPoP'));
+    }
+
+    /**
+     * @return array<string, array{mixed, string}>
+     */
+    public static function wrongTypedDpopOptionProvider(): array
+    {
+        return [
+            'array dpopPrivateKey' => [['bad'], 'dpopPrivateKey'],
+            'int dpopPrivateKeyPath' => [42, 'dpopPrivateKeyPath'],
+            'array dpopPublicKey' => [['bad'], 'dpopPublicKey'],
+            'bool dpopPublicKeyPath' => [true, 'dpopPublicKeyPath'],
+        ];
+    }
+
+    /**
+     * @dataProvider wrongTypedDpopOptionProvider
+     */
+    public function testWrongTypedDpopOptionThrowsAtConstruction(mixed $value, string $optionName): void
+    {
+        // For dpopPublicKey/dpopPublicKeyPath the test must also supply a
+        // valid private key — otherwise the helper short-circuits before
+        // looking at the public option.
+        $extras = [];
+        if (in_array($optionName, ['dpopPublicKey', 'dpopPublicKeyPath'], true)) {
+            [$privateKeyPem] = TestHelper::generateEcKeyPair();
+            $extras['dpopPrivateKeyPath'] = TestHelper::createTempKeyFile($privateKeyPem);
+        }
+
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("`{$optionName}` must be a string");
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, array_merge($extras, [$optionName => $value]));
+    }
 }

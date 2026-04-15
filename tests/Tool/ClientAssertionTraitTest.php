@@ -194,19 +194,21 @@ final class ClientAssertionTraitTest extends TestCase
         self::assertSame('ES256', $header['alg']);
     }
 
-    public function testMissingPrivateKeyFileThrowsError(): void
+    public function testMissingPrivateKeyFileThrowsAtConstruction(): void
     {
+        // Misconfigured privateKeyPath fails fast at construction, surfacing the
+        // problem at deploy time rather than on the first token request.
         $history = [];
-        $provider = TestHelper::fullProvider([
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('`privateKeyPath` must be a readable file');
+
+        TestHelper::fullProvider([
             TestHelper::wellKnownResponse(),
         ], $history, [
             'privateKeyPath' => '/tmp/does-not-exist-' . bin2hex(random_bytes(8)),
             'keyId' => 'missing-file',
         ]);
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Private key file not found');
-        $provider->debugAccessTokenRequestFromGrant('client_credentials');
     }
 
     public function testJwkSetJsonThrowsError(): void
@@ -224,7 +226,7 @@ final class ClientAssertionTraitTest extends TestCase
         ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Unsupported or missing key type');
+        $this->expectExceptionMessage('must be a single JWK, not a JWK set');
         $provider->debugAccessTokenRequestFromGrant('client_credentials');
     }
 
@@ -245,7 +247,7 @@ final class ClientAssertionTraitTest extends TestCase
         ]);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Unsupported or missing key type');
+        $this->expectExceptionMessage("Unsupported key type 'oct' for client assertion");
         $provider->debugAccessTokenRequestFromGrant('client_credentials');
     }
 
@@ -365,6 +367,239 @@ final class ClientAssertionTraitTest extends TestCase
 
         $body = (string) $request->getBody();
         parse_str($body, $params);
+        self::assertArrayHasKey('client_assertion', $params);
+    }
+
+    public function testRawJwkJsonViaPrivateKeyOption(): void
+    {
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'raw-jwk-env';
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'privateKey' => json_encode($jwk),
+            'keyId' => 'raw-jwk-env',
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        parse_str((string) $request->getBody(), $params);
+        self::assertArrayHasKey('client_assertion', $params);
+    }
+
+    public function testRawPemViaPrivateKeyOption(): void
+    {
+        $resource = openssl_pkey_new([
+            'private_key_type' => OPENSSL_KEYTYPE_EC,
+            'curve_name' => 'prime256v1',
+        ]);
+        openssl_pkey_export($resource, $privateKeyPem);
+        self::assertStringContainsString('-----BEGIN', $privateKeyPem);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'privateKey' => $privateKeyPem,
+            'keyId' => 'raw-pem-env',
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+
+        $assertion = (function () use ($request) {
+            parse_str((string) $request->getBody(), $params);
+            return $params['client_assertion'] ?? '';
+        })();
+
+        self::assertNotSame('', $assertion);
+        $headerB64 = explode('.', $assertion)[0];
+        $header = json_decode(base64_decode(strtr($headerB64, '-_', '+/')), true);
+        self::assertSame('ES256', $header['alg']);
+    }
+
+    public function testPrivateKeyAndPrivateKeyPathAreMutuallyExclusive(): void
+    {
+        // Setting both options must fail loudly rather than silently picking
+        // one — this keeps the contract unambiguous for env-var deployments.
+        [, , $jwk] = TestHelper::generateEcKeyPair();
+        $jwk['d'] = 'fake';
+        $path = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Provide either `privateKey` (raw PEM/JWK content) or `privateKeyPath` (filesystem path), not both');
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKey' => json_encode($jwk),
+            'privateKeyPath' => $path,
+        ]);
+    }
+
+    public function testEmptyPrivateKeyAliasFallsBackToPrivateKeyPath(): void
+    {
+        // Env-var deployments commonly bind unset secrets to '': an empty
+        // `privateKey` alias must NOT mask a valid `privateKeyPath`.
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'fallback-wins';
+        $path = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'privateKey' => '',
+            'privateKeyPath' => $path,
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+        parse_str((string) $request->getBody(), $params);
+
+        self::assertArrayHasKey('client_assertion', $params, 'Empty alias must not silently disable client assertion');
+        $header = json_decode(
+            base64_decode(strtr(explode('.', $params['client_assertion'])[0], '-_', '+/')),
+            true
+        );
+        self::assertSame('fallback-wins', $header['kid']);
+    }
+
+    public function testBomPrefixedRawJwkIsAccepted(): void
+    {
+        // The downstream JWK parser strips BOMs, so a BOM-prefixed env var
+        // value should still load correctly via `privateKey`.
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'bom-jwk';
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'privateKey' => "\xEF\xBB\xBF" . json_encode($jwk),
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+        parse_str((string) $request->getBody(), $params);
+
+        self::assertArrayHasKey('client_assertion', $params);
+    }
+
+    /**
+     * @return array<string, array{mixed, string}>
+     */
+    public static function wrongTypedOptionProvider(): array
+    {
+        return [
+            'array privateKey' => [['this', 'is', 'an', 'array'], 'privateKey'],
+            'int privateKey' => [123, 'privateKey'],
+            'bool privateKey' => [true, 'privateKey'],
+            'object privateKey' => [new \stdClass(), 'privateKey'],
+            'array privateKeyPath' => [['/path/to/key'], 'privateKeyPath'],
+            'int privateKeyPath' => [42, 'privateKeyPath'],
+        ];
+    }
+
+    /**
+     * @dataProvider wrongTypedOptionProvider
+     */
+    public function testWrongTypedKeyOptionThrowsAtConstruction(mixed $value, string $optionName): void
+    {
+        // Silently coercing wrong-typed options to "absent" is dangerous: a
+        // typo in env-var plumbing would silently disable client assertion in
+        // production. Fail-fast at construction instead.
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("`{$optionName}` must be a string");
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            $optionName => $value,
+        ]);
+    }
+
+    public function testWrongTypedKeyIdThrowsAtConstruction(): void
+    {
+        // keyId arrives at the trait via strict_types — wrong types would
+        // already throw a TypeError, but the message would be opaque. Validate
+        // at the option boundary so the error names the option.
+        [, , $jwk] = TestHelper::generateEcKeyPair();
+        $jwk['d'] = 'fake';
+        $path = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('`keyId` must be a string');
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'privateKeyPath' => $path,
+            'keyId' => 12345,
+        ]);
+    }
+
+    public function testWrongTypedEnforceIssuerIdentificationThrowsAtConstruction(): void
+    {
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('`enforceIssuerIdentification` must be a bool');
+
+        TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, [
+            'enforceIssuerIdentification' => 'yes',
+        ]);
+    }
+
+    public function testNullPrivateKeyOptionFallsBackToPath(): void
+    {
+        // Explicit null (not just unset / empty) on the alias should also
+        // fall back to the path option. This complements the empty-string
+        // fallback test and verifies the null branch of extractStringOption.
+        [$privateKey, , $jwk] = TestHelper::generateEcKeyPair();
+        $resource = openssl_pkey_get_private($privateKey);
+        $details = openssl_pkey_get_details($resource);
+        $jwk['d'] = rtrim(strtr(base64_encode($details['ec']['d']), '+/', '-_'), '=');
+        $jwk['kid'] = 'null-fallback';
+        $path = TestHelper::createTempKeyFile(json_encode($jwk));
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [
+            'privateKey' => null,
+            'privateKeyPath' => $path,
+        ]);
+
+        $provider->setPkceCode('verifier');
+        $request = $provider->debugAccessTokenRequestFromGrant('authorization_code', ['code' => 'abc']);
+        parse_str((string) $request->getBody(), $params);
+
         self::assertArrayHasKey('client_assertion', $params);
     }
 

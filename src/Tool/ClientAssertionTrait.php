@@ -6,7 +6,6 @@ namespace Hvatum\OpenIDConnect\Client\Tool;
 
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWK;
-use Jose\Component\Core\JWKSet;
 use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\Algorithm\ES384;
 use Jose\Component\Signature\Algorithm\ES512;
@@ -56,9 +55,11 @@ trait ClientAssertionTrait
     ];
 
     /**
-     * Private key path for client assertions
+     * Resolved raw private key material (PEM or JWK JSON). Populated by
+     * initializeClientAssertion() whether the input was a filesystem path or
+     * raw content.
      */
-    protected ?string $clientAssertionPrivateKeyPath = null;
+    protected ?string $clientAssertionPrivateKeyContent = null;
 
     /**
      * Key ID for client assertions
@@ -76,15 +77,19 @@ trait ClientAssertionTrait
     protected string $clientAssertionAlgorithm = 'RS256';
 
     /**
-     * Initialize client assertion with private key
+     * Initialize client assertion with raw private key content.
      *
-     * @param string $privateKeyPath Path to PEM or JWK private key file
-     * @param string|null $keyId Key ID (kid) - if null, will be extracted from JWK file
+     * Callers pass already-loaded PEM or JWK content. The provider constructor
+     * is responsible for reading filesystem paths via the `privateKeyPath`
+     * option before reaching this method.
+     *
+     * @param string $privateKeyContent Raw PEM or JWK JSON content
+     * @param string|null $keyId Key ID (kid) - if null, will be extracted from JWK
      */
-    protected function initializeClientAssertion(string $privateKeyPath, ?string $keyId = null): void
+    protected function initializeClientAssertion(string $privateKeyContent, ?string $keyId = null): void
     {
-        $this->clientAssertionPrivateKeyPath = $privateKeyPath;
         $this->clientAssertionKeyId = $keyId;
+        $this->clientAssertionPrivateKeyContent = $privateKeyContent;
     }
 
     /**
@@ -95,7 +100,7 @@ trait ClientAssertionTrait
      */
     protected function hasClientAssertion(): bool
     {
-        return $this->clientAssertionPrivateKeyPath !== null;
+        return $this->clientAssertionPrivateKeyContent !== null;
     }
 
     /**
@@ -230,81 +235,51 @@ trait ClientAssertionTrait
             return $this->clientAssertionJwk;
         }
 
-        if (!file_exists($this->clientAssertionPrivateKeyPath)) {
+        if ($this->clientAssertionPrivateKeyContent === null) {
             throw new \RuntimeException(
-                "Private key file not found: {$this->clientAssertionPrivateKeyPath}"
+                'Client assertion private key is not configured. '
+                . 'Supply `privateKey` (raw PEM/JWK) or `privateKeyPath` (filesystem path) at construction.'
             );
         }
 
-        $content = file_get_contents($this->clientAssertionPrivateKeyPath);
-        if ($content === false) {
-            throw new \RuntimeException(
-                "Failed to read private key file: {$this->clientAssertionPrivateKeyPath}"
-            );
-        }
+        $jwk = KeyMaterialParser::parseToJwk(
+            $this->clientAssertionPrivateKeyContent,
+            'Client assertion private key'
+        );
 
-        // Remove UTF-8 BOM if present and trim
-        $content = preg_replace('/^\xEF\xBB\xBF/', '', $content);
-        $trimmed = trim($content);
-
-        // Detect format
-        if (strpos($trimmed, '{') === 0) {
-            // JWK format - parse directly
-            $this->clientAssertionJwk = $this->loadJwkFromJson($trimmed);
-        } elseif (strpos($trimmed, '-----BEGIN') === 0) {
-            // PEM format - convert to JWK
-            $this->clientAssertionJwk = $this->loadJwkFromPem($content);
-        } else {
-            throw new \RuntimeException(
-                'Private key must be in PEM format (-----BEGIN...) or JWK format ({...})'
-            );
-        }
-
+        $this->clientAssertionJwk = $this->postProcessClientAssertionJwk($jwk);
         return $this->clientAssertionJwk;
     }
 
     /**
-     * Load JWK from JSON content
+     * Apply client-assertion-specific bookkeeping to a freshly parsed JWK:
+     * extract the kid (if not already configured), pick the signing algorithm,
+     * and normalize the kty casing so the web-token signer accepts it.
      *
-     * @param string $jsonContent
-     * @return JWK
-     * @throws \RuntimeException
+     * Works for any source format — PEM, DER, or JWK JSON — because the
+     * parser hands us a JWK and we only inspect its fields here.
+     *
+     * @throws \RuntimeException for unsupported, forbidden, or missing alg/kty
      */
-    protected function loadJwkFromJson(string $jsonContent): JWK
+    private function postProcessClientAssertionJwk(JWK $jwk): JWK
     {
-        $decoded = json_decode($jsonContent, true);
-        if (!is_array($decoded)) {
-            throw new \RuntimeException('Invalid JWK: not valid JSON');
+        if ($this->clientAssertionKeyId === null && $jwk->has('kid')) {
+            $this->clientAssertionKeyId = $jwk->get('kid');
         }
 
-        if (!isset($decoded['kty'])) {
-            throw new \RuntimeException('Unsupported or missing key type (kty) in JWK: null');
-        }
-
-        $key = \Jose\Component\KeyManagement\JWKFactory::createFromJsonObject($jsonContent);
-        if ($key instanceof JWKSet) {
-            throw new \RuntimeException('Invalid JWK: expected a single private key, got a JWK set');
-        }
-
-        // Extract kid if not already configured
-        if ($this->clientAssertionKeyId === null && $key->has('kid')) {
-            $this->clientAssertionKeyId = $key->get('kid');
-        }
-
-        // Detect algorithm — prefer explicit 'alg' field, fallback to key type
-        $kty = strtoupper($key->get('kty'));
-        $alg = $key->has('alg') ? strtoupper($key->get('alg')) : null;
+        $kty = strtoupper($jwk->get('kty'));
+        $alg = $jwk->has('alg') ? strtoupper($jwk->get('alg')) : null;
 
         if ($alg !== null) {
             if (in_array($alg, static::$forbiddenAlgorithms, true)) {
                 throw new \RuntimeException(
-                    "Algorithm '{$key->get('alg')}' is not allowed for client assertions"
+                    "Algorithm '{$jwk->get('alg')}' is not allowed for client assertions"
                 );
             }
             if (!in_array($alg, static::$allowedAlgorithms, true)) {
                 throw new \RuntimeException(
-                    "Unsupported algorithm in JWK: '{$key->get('alg')}'. " .
-                    "Allowed: " . implode(', ', static::$allowedAlgorithms)
+                    "Unsupported algorithm '{$jwk->get('alg')}' for client assertion. "
+                    . 'Allowed: ' . implode(', ', static::$allowedAlgorithms)
                 );
             }
             $this->clientAssertionAlgorithm = $alg;
@@ -312,41 +287,17 @@ trait ClientAssertionTrait
             $this->clientAssertionAlgorithm = static::$ktyToAlg[$kty];
         } else {
             throw new \RuntimeException(
-                "Unsupported or missing key type (kty) in JWK: " . $key->get('kty')
+                "Unsupported key type '{$jwk->get('kty')}' for client assertion. "
+                . 'Supported: ' . implode(', ', array_keys(static::$ktyToAlg))
             );
         }
 
-        // Normalize kty to uppercase (web-token requires uppercase for signing)
-        $data = $key->all();
+        // web-token requires uppercase kty for signing; JWK JSON callers may
+        // supply lowercase ('rsa', 'ec'), so normalize once here.
+        $data = $jwk->all();
         if (isset($data['kty']) && $data['kty'] !== strtoupper($data['kty'])) {
             $data['kty'] = strtoupper($data['kty']);
             return new JWK($data);
-        }
-
-        return $key;
-    }
-
-    /**
-     * Load JWK from PEM content
-     *
-     * @param string $pemContent
-     * @return JWK
-     * @throws \RuntimeException
-     */
-    protected function loadJwkFromPem(string $pemContent): JWK
-    {
-        // web-token v4 handles both traditional (SEC1/PKCS#1) and PKCS#8 PEM
-        // formats for both EC and RSA keys.
-        $jwk = \Jose\Component\KeyManagement\JWKFactory::createFromKey($pemContent);
-
-        // Detect algorithm from actual key type in the JWK
-        $kty = strtoupper($jwk->get('kty'));
-        if (isset(static::$ktyToAlg[$kty])) {
-            $this->clientAssertionAlgorithm = static::$ktyToAlg[$kty];
-        } else {
-            throw new \RuntimeException(
-                "Unsupported key type in PEM: '{$kty}'. Supported: " . implode(', ', array_keys(static::$ktyToAlg))
-            );
         }
 
         return $jwk;
