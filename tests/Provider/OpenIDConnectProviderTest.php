@@ -6,7 +6,7 @@ namespace Hvatum\OpenIDConnect\Client\Test\Provider;
 
 use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\TestCase;
-use Hvatum\OpenIDConnect\Client\Test\IssuerAudienceTestHelper;
+use Hvatum\OpenIDConnect\Client\Test\TokenEndpointAudienceTestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestProvider;
 use League\OAuth2\Client\Tool\RequestFactory;
@@ -204,12 +204,12 @@ final class OpenIDConnectProviderTest extends TestCase
         self::assertNotEmpty($parParams['client_assertion']);
         self::assertArrayNotHasKey('client_secret', $parParams);
 
-        // Audience should be the token endpoint URL per RFC 7523 §3
-        // (RFC 9126 §2: PAR uses same client auth as token endpoint)
+        // Audience is the issuer identifier per draft-ietf-oauth-rfc7523bis §5
+        // (updating RFC 9126 §2: PAR uses same client auth as token endpoint)
         $assertion = $parParams['client_assertion'];
         $payloadB64 = explode('.', $assertion)[1];
         $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
-        self::assertSame('https://idp.test/oauth2/token', $payload['aud']);
+        self::assertSame('https://idp.test', $payload['aud']);
     }
 
     public function testDiscoveryAcceptsProviderWithoutUserinfoEndpoint(): void
@@ -1860,7 +1860,7 @@ final class OpenIDConnectProviderTest extends TestCase
     // Client assertion audience hook
     // -------------------------------------------------------------------------
 
-    public function testClientAssertionAudienceDefaultsToTokenEndpoint(): void
+    public function testClientAssertionAudienceDefaultsToIssuer(): void
     {
         $history = [];
         $provider = TestHelper::fullProvider([
@@ -1877,13 +1877,17 @@ final class OpenIDConnectProviderTest extends TestCase
 
         $payloadB64 = explode('.', $params['client_assertion'])[1];
         $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
-        self::assertSame('https://idp.test/oauth2/token', $payload['aud']);
+        // draft-ietf-oauth-rfc7523bis §4: the issuer identifier is the sole
+        // audience value; the token endpoint URL must not be used.
+        self::assertSame('https://idp.test', $payload['aud']);
     }
 
     public function testSubclassCanOverrideClientAssertionAudience(): void
     {
+        // Legacy escape hatch: servers still on RFC 7523 §3 / OIDC Core §9
+        // expect the token endpoint URL, reachable by overriding the hook.
         $history = [];
-        $provider = IssuerAudienceTestHelper::fullProvider([
+        $provider = TokenEndpointAudienceTestHelper::fullProvider([
             TestHelper::wellKnownResponse(),
             TestHelper::tokenResponse(),
         ], $history);
@@ -1896,13 +1900,13 @@ final class OpenIDConnectProviderTest extends TestCase
 
         $payloadB64 = explode('.', $params['client_assertion'])[1];
         $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
-        self::assertSame('https://idp.test', $payload['aud']);
+        self::assertSame('https://idp.test/oauth2/token', $payload['aud']);
     }
 
     public function testParRequestUsesOverriddenClientAssertionAudience(): void
     {
         $history = [];
-        $provider = IssuerAudienceTestHelper::fullProvider([
+        $provider = TokenEndpointAudienceTestHelper::fullProvider([
             TestHelper::wellKnownResponse(),
             TestHelper::parResponse(),
         ], $history);
@@ -1915,7 +1919,7 @@ final class OpenIDConnectProviderTest extends TestCase
 
         $payloadB64 = explode('.', $parParams['client_assertion'])[1];
         $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
-        self::assertSame('https://idp.test', $payload['aud']);
+        self::assertSame('https://idp.test/oauth2/token', $payload['aud']);
     }
 
     // -------------------------------------------------------------------------

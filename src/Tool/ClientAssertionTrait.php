@@ -122,7 +122,8 @@ trait ClientAssertionTrait
     /**
      * Create a client assertion JWT
      *
-     * @param string $audience Token endpoint URL
+     * @param string $audience Audience claim value; the issuer identifier per
+     *                         draft-ietf-oauth-rfc7523bis §4
      * @param int|null $expiresIn Expiration time in seconds (defaults to CLIENT_ASSERTION_TTL)
      * @return string Signed JWT
      * @throws \RuntimeException

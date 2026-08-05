@@ -41,8 +41,8 @@ final class ClientAssertionTraitTest extends TestCase
         $payloadB64 = explode('.', $assertion)[1];
         $payload = json_decode(base64_decode(strtr($payloadB64, '-_', '+/')), true);
 
-        // Audience should be the token endpoint URL (RFC 7523 Section 3)
-        self::assertSame('https://idp.test/oauth2/token', $payload['aud']);
+        // Audience is the issuer identifier (draft-ietf-oauth-rfc7523bis §4)
+        self::assertSame('https://idp.test', $payload['aud']);
         self::assertSame('client-123', $payload['iss']);
         self::assertSame('client-123', $payload['sub']);
     }

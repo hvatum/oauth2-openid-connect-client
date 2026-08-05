@@ -7,12 +7,12 @@ namespace Hvatum\OpenIDConnect\Client\Test;
 use League\OAuth2\Client\Tool\RequestFactory;
 
 /**
- * Test helper that creates IssuerAudienceTestProvider instances
+ * Test helper that creates TokenEndpointAudienceTestProvider instances
  * for testing the getClientAssertionAudience() override.
  */
-final class IssuerAudienceTestHelper
+final class TokenEndpointAudienceTestHelper
 {
-    public static function fullProvider(array $responses, array &$history, array $options = []): IssuerAudienceTestProvider
+    public static function fullProvider(array $responses, array &$history, array $options = []): TokenEndpointAudienceTestProvider
     {
         // Auto-generate client assertion key if neither option is provided
         if (!isset($options['privateKeyPath']) && !isset($options['privateKey'])) {
@@ -40,7 +40,7 @@ final class IssuerAudienceTestHelper
         $httpClient = TestHelper::httpClient($responses, $history);
         $requestFactory = new RequestFactory();
 
-        return new IssuerAudienceTestProvider(array_merge([
+        return new TokenEndpointAudienceTestProvider(array_merge([
             'clientId' => 'client-123',
             'redirectUri' => 'https://app.example/callback',
             'issuer' => 'https://idp.test',

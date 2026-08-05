@@ -237,14 +237,22 @@ class MyProvider extends OpenIDConnectProvider
 }
 ```
 
-Some authorization servers require the client assertion `aud` claim to be the issuer URL instead of the token endpoint (the default per RFC 7523 §3). Override `getClientAssertionAudience()`:
+The client assertion `aud` claim defaults to the issuer identifier, as required by
+[draft-ietf-oauth-rfc7523bis](https://datatracker.ietf.org/doc/draft-ietf-oauth-rfc7523bis/) §4
+(updating RFC 7523 §3), which mandates the issuer identifier as the sole audience value and
+forbids the token endpoint URL. The draft — not yet an RFC, but in the RFC Editor queue —
+tightens the original RFC 7523 §3 rule (which allowed the token endpoint) and OpenID Connect
+Core §9 (which recommended it).
+
+Legacy servers that only accept the token endpoint URL are still supported by overriding
+`getClientAssertionAudience()`:
 
 ```php
 class MyProvider extends OpenIDConnectProvider
 {
     protected function getClientAssertionAudience(): string
     {
-        return $this->issuerUrl;
+        return $this->tokenUrl;
     }
 }
 ```

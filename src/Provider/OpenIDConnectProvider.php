@@ -546,19 +546,30 @@ class OpenIDConnectProvider extends AbstractProvider
     /**
      * Get the audience URL for client assertion JWTs.
      *
-     * Default: token endpoint URL per RFC 7523 §3.
-     * Override in subclasses if the authorization server requires a different audience
-     * (e.g. the issuer URL instead of the token endpoint).
-     * 
-     * See
-     * https://datatracker.ietf.org/doc/draft-ietf-oauth-rfc7523bis/06/
-     * section 3
+     * Default: the issuer identifier. draft-ietf-oauth-rfc7523bis §4
+     * (updating RFC 7523 §3) requires the issuer identifier as the client
+     * authentication assertion's *sole* audience value and forbids the token
+     * endpoint URL, tightening both the original RFC 7523 §3 (which merely
+     * allowed the token endpoint) and OpenID Connect Core §9 (which
+     * recommended it). Servers following the newer rule reject token-endpoint
+     * audiences outright.
+     *
+     * Override in subclasses for legacy servers that only accept the token
+     * endpoint URL:
+     *
+     *     protected function getClientAssertionAudience(): string
+     *     {
+     *         return $this->tokenUrl;
+     *     }
+     *
+     * See https://datatracker.ietf.org/doc/draft-ietf-oauth-rfc7523bis/
+     * section 4
      *
      * @return string
      */
     protected function getClientAssertionAudience(): string
     {
-        return $this->tokenUrl;
+        return $this->issuerUrl;
     }
 
     /**
