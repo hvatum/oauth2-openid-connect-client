@@ -147,6 +147,101 @@ final class SignedUserinfoTest extends TestCase
         $provider->getResourceOwner($token);
     }
 
+    public function testForcedJwksRefreshIsRateLimitedAcrossFailures(): void
+    {
+        // A burst of invalid tokens must not become a JWKS fetch per token:
+        // the rotation retry runs at most once per cooldown window.
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $jwt = TestHelper::signIdToken($this->userinfoClaims(), $private, $jwk['kid']);
+        $parts = explode('.', $jwt);
+        $parts[1] = TestHelper::base64UrlEncode(json_encode(
+            $this->userinfoClaims(['sub' => 'attacker']),
+            JSON_UNESCAPED_SLASHES
+        ));
+        $tampered = implode('.', $parts);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(200, ['Content-Type' => 'application/jwt'], $tampered),
+            TestHelper::jwksResponse($jwk),
+            TestHelper::jwksResponse($jwk), // first failure: one forced refresh
+            new Response(200, ['Content-Type' => 'application/jwt'], $tampered),
+            // no further JWKS responses: the second failure must not refetch
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        try {
+            $provider->getResourceOwner($token);
+            self::fail('First tampered userinfo response should throw');
+        } catch (IdentityProviderException $e) {
+            self::assertStringContainsString('Signature verification failed', $e->getMessage());
+        }
+
+        try {
+            $provider->getResourceOwner($token);
+            self::fail('Second tampered userinfo response should throw');
+        } catch (IdentityProviderException $e) {
+            self::assertStringContainsString('Signature verification failed', $e->getMessage());
+        }
+
+        $jwksFetches = array_filter(
+            $history,
+            static fn(array $t): bool => str_contains((string) $t['request']->getUri(), '/jwks')
+        );
+        self::assertCount(2, $jwksFetches, 'cooldown must prevent a third JWKS fetch');
+    }
+
+    public function testValidRotatedKeyIsAcceptedAfterInvalidTokenConsumesRefreshCooldown(): void
+    {
+        // Invalid tokens should not suppress recovery for a later legitimate
+        // key rotation. If the next JWT names a kid missing from the cached
+        // JWKS, the provider must refresh even during the cooldown window.
+        [$oldPrivate, , $oldJwk] = TestHelper::generateEcKeyPair();
+        $oldJwk['kid'] = 'old-key';
+        [$newPrivate, , $newJwk] = TestHelper::generateEcKeyPair();
+        $newJwk['kid'] = 'new-key';
+
+        $jwt = TestHelper::signIdToken($this->userinfoClaims(), $oldPrivate, $oldJwk['kid']);
+        $parts = explode('.', $jwt);
+        $parts[1] = TestHelper::base64UrlEncode(json_encode(
+            $this->userinfoClaims(['sub' => 'attacker']),
+            JSON_UNESCAPED_SLASHES
+        ));
+        $tampered = implode('.', $parts);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(200, ['Content-Type' => 'application/jwt'], $tampered),
+            TestHelper::jwksResponse($oldJwk),
+            TestHelper::jwksResponse($oldJwk), // invalid token consumes the normal forced refresh
+            TestHelper::signedUserinfoResponse($this->userinfoClaims(), $newPrivate, $newJwk['kid']),
+            TestHelper::jwksResponse($newJwk),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        try {
+            $provider->getResourceOwner($token);
+            self::fail('Tampered userinfo response should throw');
+        } catch (IdentityProviderException $e) {
+            self::assertStringContainsString('Signature verification failed', $e->getMessage());
+        }
+
+        $owner = $provider->getResourceOwner($token);
+
+        self::assertSame('user-123', $owner->getId());
+        $jwksFetches = array_filter(
+            $history,
+            static fn(array $t): bool => str_contains((string) $t['request']->getUri(), '/jwks')
+        );
+        self::assertCount(3, $jwksFetches, 'valid rotated kid must still trigger a JWKS refresh');
+    }
+
     public function testSignedUserinfoRetriesJwksOnceOnKeyRotation(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();

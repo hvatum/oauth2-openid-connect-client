@@ -96,6 +96,13 @@ class OpenIDConnectProvider extends AbstractProvider
     public const CLOCK_SKEW_LEEWAY = 60;
 
     /**
+     * Minimum seconds between forced JWKS refreshes triggered by signature
+     * failures. Rate-limits the key-rotation retry so a burst of invalid
+     * tokens cannot turn into a JWKS fetch per token.
+     */
+    public const JWKS_FORCED_REFRESH_COOLDOWN = 60;
+
+    /**
      * ID-token transport claims that must not leak into the resource owner —
      * they describe the authentication transaction, not the end user. Kept in
      * one list so the ID-token filter in createResourceOwner() and the signed
@@ -220,6 +227,18 @@ class OpenIDConnectProvider extends AbstractProvider
      * Last token request params (for DPoP nonce retry)
      */
     protected ?array $lastTokenParams = null;
+
+    /**
+     * In-process memoization for JWT validation machinery derived from
+     * post-discovery-immutable state. The parsed JWKSet is keyed by the raw
+     * JWKS data, so PSR-16 TTL expiry and forced refreshes invalidate it
+     * naturally; checkers/verifiers never change after discovery.
+     */
+    private ?array $jwkSetMemoSource = null;
+    private ?JWKSet $jwkSetMemo = null;
+    private ?array $baseClaimCheckersMemo = null;
+    /** @var array<string, JWSVerifier> */
+    private array $jwsVerifierMemo = [];
 
     /**
      * PSR-3 Logger instance
@@ -1057,20 +1076,9 @@ class OpenIDConnectProvider extends AbstractProvider
         bool $requireAzpWithMultipleAudiences
     ): void {
         try {
-            // PSR-20 clock required by web-token v4 time-based checkers
-            $clock = new class implements \Psr\Clock\ClockInterface {
-                public function now(): \DateTimeImmutable
-                {
-                    return new \DateTimeImmutable();
-                }
-            };
-            $claimCheckerManager = new ClaimCheckerManager(array_merge([
-                new IssuerChecker([$this->issuerUrl]),
-                new AudienceChecker($this->clientId),
-                new ExpirationTimeChecker($clock, static::CLOCK_SKEW_LEEWAY),
-                new NotBeforeChecker($clock, static::CLOCK_SKEW_LEEWAY),
-                new IssuedAtChecker($clock, static::CLOCK_SKEW_LEEWAY),
-            ], $extraCheckers));
+            $claimCheckerManager = new ClaimCheckerManager(
+                array_merge($this->baseClaimCheckers(), $extraCheckers)
+            );
 
             $claimCheckerManager->check($claims, $mandatoryClaims);
         } catch (MissingMandatoryClaimException $e) {
@@ -1160,6 +1168,34 @@ class OpenIDConnectProvider extends AbstractProvider
     {
         return $azp === $this->clientId
             || in_array($azp, $this->allowedAuthorizedParties, true);
+    }
+
+    /**
+     * The claim checkers shared by every JWT validation, built once —
+     * their inputs (issuer, client ID, leeway) are fixed after discovery.
+     *
+     * @return array<\Jose\Component\Checker\ClaimChecker>
+     */
+    private function baseClaimCheckers(): array
+    {
+        if ($this->baseClaimCheckersMemo === null) {
+            // PSR-20 clock required by web-token v4 time-based checkers
+            $clock = new class implements \Psr\Clock\ClockInterface {
+                public function now(): \DateTimeImmutable
+                {
+                    return new \DateTimeImmutable();
+                }
+            };
+            $this->baseClaimCheckersMemo = [
+                new IssuerChecker([$this->issuerUrl]),
+                new AudienceChecker($this->clientId),
+                new ExpirationTimeChecker($clock, static::CLOCK_SKEW_LEEWAY),
+                new NotBeforeChecker($clock, static::CLOCK_SKEW_LEEWAY),
+                new IssuedAtChecker($clock, static::CLOCK_SKEW_LEEWAY),
+            ];
+        }
+
+        return $this->baseClaimCheckersMemo;
     }
 
     /**
@@ -1662,23 +1698,23 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         try {
-            // Build AlgorithmManager with only mutually supported algorithms
-            $algorithmMap = [
-                'ES256' => ES256::class, 'ES384' => ES384::class, 'ES512' => ES512::class,
-                'RS256' => RS256::class, 'RS384' => RS384::class, 'RS512' => RS512::class,
-                'PS256' => PS256::class, 'PS384' => PS384::class, 'PS512' => PS512::class,
-            ];
-            $algorithms = [];
-            foreach ($allowedAlgorithms as $alg) {
-                $algorithms[] = new $algorithmMap[$alg]();
-            }
-            $algorithmManager = new AlgorithmManager($algorithms);
-            $jwsVerifier = new JWSVerifier($algorithmManager);
-            $jwkSet = JWKSet::createFromKeyData($this->getJwks());
+            $jwsVerifier = $this->jwsVerifierFor($allowedAlgorithms);
+            $jwks = $this->getJwks();
+            $jwkSet = $this->jwkSetFor($jwks);
 
             if (!$jwsVerifier->verifyWithKeySet($jws, $jwkSet, 0)) {
-                // Retry once with fresh JWKS in case the key set rotated recently.
-                $jwkSet = JWKSet::createFromKeyData($this->getJwks(true));
+                // Retry once with fresh JWKS in case the key set rotated
+                // recently. A kid missing from the current set is the
+                // rotation signal and always refreshes; retries for a kid
+                // the set already contains rarely help, so those are
+                // rate-limited to stop bursts of invalid tokens hammering
+                // the jwks_uri or evicting a valid cached key set.
+                $kid = $header['kid'] ?? null;
+                $unknownKid = is_string($kid) && !$this->jwksContainsKid($jwks, $kid);
+                if (!$unknownKid && !$this->mayForceJwksRefresh()) {
+                    throw new \RuntimeException('Signature verification failed');
+                }
+                $jwkSet = $this->jwkSetFor($this->getJwks(true));
                 if (!$jwsVerifier->verifyWithKeySet($jws, $jwkSet, 0)) {
                     throw new \RuntimeException('Signature verification failed');
                 }
@@ -1700,6 +1736,85 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         return $decoded;
+    }
+
+    /**
+     * A JWSVerifier restricted to the given algorithms, reused per list.
+     *
+     * @param array<string> $allowedAlgorithms Already intersected allow-list
+     */
+    private function jwsVerifierFor(array $allowedAlgorithms): JWSVerifier
+    {
+        $memoKey = implode(',', $allowedAlgorithms);
+        if (!isset($this->jwsVerifierMemo[$memoKey])) {
+            $algorithmMap = [
+                'ES256' => ES256::class, 'ES384' => ES384::class, 'ES512' => ES512::class,
+                'RS256' => RS256::class, 'RS384' => RS384::class, 'RS512' => RS512::class,
+                'PS256' => PS256::class, 'PS384' => PS384::class, 'PS512' => PS512::class,
+            ];
+            $algorithms = [];
+            foreach ($allowedAlgorithms as $alg) {
+                $algorithms[] = new $algorithmMap[$alg]();
+            }
+            $this->jwsVerifierMemo[$memoKey] = new JWSVerifier(new AlgorithmManager($algorithms));
+        }
+
+        return $this->jwsVerifierMemo[$memoKey];
+    }
+
+    /**
+     * Parse a raw JWKS array into a JWKSet, reusing the parsed set while
+     * the raw data is unchanged.
+     */
+    private function jwkSetFor(array $jwks): JWKSet
+    {
+        if ($this->jwkSetMemoSource !== $jwks) {
+            $this->jwkSetMemo = JWKSet::createFromKeyData($jwks);
+            $this->jwkSetMemoSource = $jwks;
+        }
+
+        return $this->jwkSetMemo;
+    }
+
+    /**
+     * Whether the JWKS document lists a key with the given kid.
+     *
+     * @param array<string,mixed> $jwks Raw JWKS document
+     */
+    private function jwksContainsKid(array $jwks, string $kid): bool
+    {
+        foreach ($jwks['keys'] ?? [] as $key) {
+            if (is_array($key) && ($key['kid'] ?? null) === $kid) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether a known-kid signature failure may trigger a forced JWKS
+     * refresh now.
+     *
+     * At most one such refresh per JWKS_FORCED_REFRESH_COOLDOWN, tracked in
+     * the PSR-16 cache so the limit holds across requests. Unknown-kid
+     * failures bypass this entirely (see verifyJwsAgainstProviderKeys) so
+     * invalid tokens can never suppress recovery from a real key rotation.
+     */
+    private function mayForceJwksRefresh(): bool
+    {
+        if ($this->cache === null) {
+            return true;
+        }
+
+        $cacheKey = 'jwks_forced_refresh_' . md5($this->jwksUrl ?? '');
+        $last = $this->cache->get($cacheKey);
+        if (is_int($last) && time() - $last < static::JWKS_FORCED_REFRESH_COOLDOWN) {
+            return false;
+        }
+
+        $this->cache->set($cacheKey, time(), static::JWKS_FORCED_REFRESH_COOLDOWN);
+        return true;
     }
 
     /**

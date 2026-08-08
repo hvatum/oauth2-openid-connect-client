@@ -59,3 +59,7 @@ Releases before 0.4.0 predate this file; see the git history for those.
 - Userinfo responses no longer update the stored DPoP nonce (RFC 9449 §9).
 - A userinfo body containing an `id_token` member can no longer replace
   the validated ID token from the token response.
+- The forced JWKS refresh after a signature failure with an already-known
+  `kid` is rate-limited (at most one per 60s); an unknown `kid` — the key
+  rotation signal — always refreshes. Parsed key sets, claim checkers and
+  verifiers are reused across validations in the same request.
