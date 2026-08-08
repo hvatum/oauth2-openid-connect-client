@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Hvatum\OpenIDConnect\Client\Test\Provider;
 
 use GuzzleHttp\Psr7\Response;
+use GuzzleHttp\Psr7\Request;
 use PHPUnit\Framework\TestCase;
 use Hvatum\OpenIDConnect\Client\Test\TokenEndpointAudienceTestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestProvider;
+use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use League\OAuth2\Client\Tool\RequestFactory;
 
 final class OpenIDConnectProviderTest extends TestCase
@@ -1553,7 +1555,7 @@ final class OpenIDConnectProviderTest extends TestCase
         ], $history);
     }
 
-    public function testFetchResourceOwnerDetailsThrowsOnNonJsonResponse(): void
+    public function testFetchResourceOwnerDetailsWrapsNonJsonResponse(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();
         $idToken = TestHelper::signIdToken([
@@ -1575,9 +1577,228 @@ final class OpenIDConnectProviderTest extends TestCase
 
         $token = $provider->getAccessToken('client_credentials');
 
-        $this->expectException(\UnexpectedValueException::class);
+        $this->expectException(IdentityProviderException::class);
         $this->expectExceptionMessage('Expected JSON');
 
+        $provider->getResourceOwner($token);
+    }
+
+    public function testFetchResourceOwnerDetailsWrapsJsonScalarResponse(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(200, ['Content-Type' => 'application/json'], json_encode('ok')),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('Expected JSON object');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testUserinfoErrorStatusWithNonJsonBodyThrowsIdentityProviderException(): void
+    {
+        // A proxy 502 with an HTML body must honor getResourceOwner()'s
+        // @throws contract (IdentityProviderException), not leak the
+        // UnexpectedValueException from JSON parsing.
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(502, ['Content-Type' => 'text/html'], '<html>upstream error</html>'),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('Bad Gateway');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testUserinfoErrorStatusSurfacesFormEncodedErrorDescription(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(400, ['Content-Type' => 'application/x-www-form-urlencoded'],
+                'error=invalid_token&error_description=Token+revoked'),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('Token revoked');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testNonStringErrorDescriptionDoesNotCrash(): void
+    {
+        // error/error_description are server-controlled; a non-string value
+        // must fall back to the next string candidate (here the error code),
+        // not TypeError inside Exception
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(400, ['Content-Type' => 'application/json'], json_encode([
+                'error' => 'invalid_token',
+                'error_description' => ['unexpected', 'array'],
+            ])),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('invalid_token');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testUserinfoDPopNonceIsNotCapturedForTokenEndpointProofs(): void
+    {
+        // RFC 9449 §9: a nonce is only accepted by the server that issued it.
+        // Userinfo requests carry no DPoP proof, so a DPoP-Nonce header on a
+        // userinfo response must not leak into token-endpoint proofs.
+        [$privateKey, $publicKey] = TestHelper::generateEcKeyPair();
+        $privPath = TestHelper::createTempKeyFile($privateKey);
+        $pubPath = TestHelper::createTempKeyFile($publicKey);
+
+        $history = [];
+        $provider = TestHelper::fullProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(200, [
+                'Content-Type' => 'application/json',
+                'DPoP-Nonce' => 'userinfo-nonce',
+            ], json_encode(['sub' => 'user-123'])),
+        ], $history, [
+            'dpopPrivateKeyPath' => $privPath,
+            'dpopPublicKeyPath' => $pubPath,
+        ]);
+
+        $token = $provider->getAccessToken('client_credentials');
+        $provider->getResourceOwner($token);
+
+        self::assertNull($provider->getDPopNonce());
+    }
+
+    public function testUserinfoErrorSurfacesWwwAuthenticateHeaderDetails(): void
+    {
+        // RFC 6750 §3 / OIDC Core §5.3.3: userinfo errors arrive in the
+        // WWW-Authenticate header, typically with an empty body
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(401, [
+                'WWW-Authenticate' => 'Bearer error="invalid_token", error_description="The Access Token expired"',
+            ], ''),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('The Access Token expired');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testUserinfoErrorSurfacesUnquotedWwwAuthenticateHeaderDetails(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(401, [
+                'WWW-Authenticate' => 'Bearer error=invalid_token',
+            ], ''),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('invalid_token');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testUserinfoErrorIgnoresEmptyBodyErrorStringsForFallbacks(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(401, [
+                'Content-Type' => 'application/json',
+                'WWW-Authenticate' => 'Bearer error="invalid_token", error_description="The Access Token expired"',
+            ], json_encode([
+                'error' => '',
+                'error_description' => '',
+            ])),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('The Access Token expired');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testSuccessfulUserinfoMayContainErrorClaim(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(200, ['Content-Type' => 'application/json'], json_encode([
+                'sub' => 'user-123',
+                'error' => ['code' => 0],
+            ])),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+        $owner = $provider->getResourceOwner($token);
+
+        self::assertSame('user-123', $owner->getId());
+        self::assertSame(['code' => 0], $owner->toArray()['error']);
+    }
+
+    public function testUserinfoRequestExceptionWithoutResponseIsWrapped(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new \GuzzleHttp\Exception\RequestException(
+                'Transport failed before receiving a response',
+                new Request('GET', 'https://idp.test/oauth2/userinfo')
+            ),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('Transport failed before receiving a response');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testUserinfoErrorStatusSurfacesErrorDescription(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(401, ['Content-Type' => 'application/json'], json_encode([
+                'error' => 'invalid_token',
+                'error_description' => 'The access token expired',
+            ])),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('The access token expired');
         $provider->getResourceOwner($token);
     }
 

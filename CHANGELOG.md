@@ -78,3 +78,18 @@ Releases before 0.4.0 predate this file; see the git history for those.
 
   Providers that already override `getClientAssertionAudience()` to return the
   issuer are unaffected, and the override can now be removed.
+
+### Fixed
+
+- Userinfo failures now consistently throw `IdentityProviderException`
+  (previously `UnexpectedValueException` or raw transport exceptions could
+  leak). Error details are surfaced from JSON and form-encoded bodies and
+  from the RFC 6750 `WWW-Authenticate` header.
+- A 2xx userinfo body containing an `error` claim is no longer treated as
+  an error response.
+- **BREAKING** for subclasses: userinfo errors dispatch through the new
+  `throwOnResponseError()` hook; `checkResponse()` overrides no longer see
+  userinfo responses.
+- Non-string `error`/`error_description` values no longer cause a
+  `TypeError`.
+- Userinfo responses no longer update the stored DPoP nonce (RFC 9449 §9).

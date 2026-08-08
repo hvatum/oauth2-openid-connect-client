@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace Hvatum\OpenIDConnect\Client\Provider;
 
-use GuzzleHttp\Exception\BadResponseException;
+use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Psr7\Header;
 use League\OAuth2\Client\Provider\AbstractProvider;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use League\OAuth2\Client\Token\AccessToken;
@@ -791,31 +792,112 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     protected function checkResponse(ResponseInterface $response, $data): void
     {
-        // Extract DPoP nonce from any response (before potential throw)
+        // Nonces are scoped to the issuing server (RFC 9449 §9); the userinfo
+        // path skips this hook and calls throwOnResponseError() directly so
+        // resource-server nonces stay out of token-endpoint proofs.
         $this->extractDPopNonce($response);
 
+        $this->throwOnResponseError($response, $data);
+    }
+
+    /**
+     * Throw for HTTP error statuses or error-carrying bodies.
+     *
+     * Userinfo error handling dispatches through this hook instead of
+     * checkResponse() (see there for why); subclasses mapping
+     * provider-specific userinfo errors should override this method.
+     *
+     * @param ResponseInterface $response
+     * @param array|string $data Parsed response body
+     * @param bool $throwOnSuccessfulErrorBody Whether an `error` member in a
+     *        2xx body is treated as an error (token-endpoint semantics).
+     *        UserInfo passes false — a claims document may legally contain
+     *        an `error` claim; real userinfo errors arrive via HTTP status
+     *        (OIDC Core §5.3.3).
+     * @throws IdentityProviderException
+     */
+    protected function throwOnResponseError(
+        ResponseInterface $response,
+        $data,
+        bool $throwOnSuccessfulErrorBody = true
+    ): void
+    {
+        $error = is_array($data) ? $data : [];
+
+        // error/error_description are server-controlled; only strings may
+        // reach the exception message or logs
+        $errorCode = $this->nonEmptyStringOrNull($error['error'] ?? null);
+        $message = $this->nonEmptyStringOrNull($error['error_description'] ?? null) ?? $errorCode;
+
         if ($response->getStatusCode() >= 400) {
-            $this->logger->warning('Token request failed', [
+            // RFC 6750 §3 (via OIDC Core §5.3.3): resource endpoints convey
+            // error details in the WWW-Authenticate header, often with an
+            // empty body — fall back to it before the bare reason phrase.
+            $message ??= $this->wwwAuthenticateErrorMessage($response);
+
+            $this->logger->warning('Request failed', [
                 'status' => $response->getStatusCode(),
-                'error' => is_array($data) ? ($data['error'] ?? 'unknown') : 'unknown',
+                'error' => $errorCode ?? 'unknown',
             ]);
             throw new IdentityProviderException(
-                $data['error_description'] ?? $data['error'] ?? $response->getReasonPhrase(),
+                $message ?? $response->getReasonPhrase(),
                 $response->getStatusCode(),
                 $response
             );
         }
 
-        if (is_array($data) && isset($data['error'])) {
-            $this->logger->warning('Token response contains error', [
-                'error' => $data['error'],
+        if ($throwOnSuccessfulErrorBody && isset($error['error'])) {
+            $this->logger->warning('Response contains error', [
+                'error' => $errorCode ?? gettype($error['error']),
             ]);
             throw new IdentityProviderException(
-                $data['error_description'] ?? $data['error'],
+                $message ?? 'Authorization server returned an error response',
                 $response->getStatusCode(),
                 $response
             );
         }
+    }
+
+    /**
+     * Extract error/error_description from a WWW-Authenticate header
+     * (RFC 6750 §3), e.g.:
+     *
+     *     WWW-Authenticate: Bearer error="invalid_token",
+     *                       error_description="The Access Token expired"
+     *
+     * @return string|null error_description, error, or null when absent
+     */
+    private function wwwAuthenticateErrorMessage(ResponseInterface $response): ?string
+    {
+        $headers = $response->getHeader('WWW-Authenticate');
+        if ($headers === []) {
+            return null;
+        }
+
+        $params = [];
+        foreach (Header::parse($headers) as $part) {
+            foreach ($part as $name => $value) {
+                if (!is_string($name)) {
+                    continue;
+                }
+
+                $name = strtolower($name);
+                if (str_starts_with($name, 'bearer ')) {
+                    $name = substr($name, strlen('bearer '));
+                }
+
+                if (($name === 'error' || $name === 'error_description') && is_string($value) && $value !== '') {
+                    $params[$name] = $value;
+                }
+            }
+        }
+
+        return $params['error_description'] ?? $params['error'] ?? null;
+    }
+
+    private function nonEmptyStringOrNull(mixed $value): ?string
+    {
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     /**
@@ -866,34 +948,42 @@ class OpenIDConnectProvider extends AbstractProvider
 
         try {
             $response = $this->getResponse($request);
-        } catch (BadResponseException $e) {
+        } catch (RequestException $e) {
+            if (!$e->hasResponse()) {
+                throw new IdentityProviderException($e->getMessage(), $e->getCode(), null);
+            }
             $response = $e->getResponse();
+            if ($response === null) {
+                throw new IdentityProviderException($e->getMessage(), $e->getCode(), null);
+            }
         }
 
-        // OIDC Core §5.3.2: the server may return userinfo as a signed JWT
-        // instead of plain JSON, indicated by the application/jwt media type.
-        if ($this->isJwtContentType($response)) {
-            // Servers that pin the media type per-endpoint keep application/jwt
-            // on error statuses while sending a JSON error body — recover it so
-            // checkResponse() can surface error/error_description (and DPoP
-            // nonce detection keeps working) instead of the bare reason phrase.
-            $error = $response->getStatusCode() >= 400
-                ? json_decode((string) $response->getBody(), true)
-                : null;
-            $this->checkResponse($response, is_array($error) ? $error : []);
+        // Error statuses must surface as IdentityProviderException whatever
+        // the body is (JSON, form-encoded, HTML, empty). Parse leniently for
+        // error/error_description — parent::parseResponse() handles both JSON
+        // and form-encoded bodies without this class's side effects.
+        if ($response->getStatusCode() >= 400) {
+            try {
+                $error = parent::parseResponse($response);
+            } catch (\UnexpectedValueException $e) {
+                $error = [];
+            }
+            $parsed = is_array($error) ? $error : [];
+        } elseif ($this->isJwtContentType($response)) {
+            // OIDC Core §5.3.2: signed JWT userinfo, indicated by media type
             $this->logger->debug('UserInfo returned application/jwt; verifying signed response');
             return $this->decodeSignedUserinfoResponse((string) $response->getBody());
+        } else {
+            try {
+                $parsed = $this->parseResponse($response);
+            } catch (\UnexpectedValueException $e) {
+                throw new IdentityProviderException($e->getMessage(), $response->getStatusCode(), $response);
+            }
         }
 
-        try {
-            $parsed = $this->parseResponse($response);
-        } catch (\UnexpectedValueException $e) {
-            $this->logger->error('Request failed with non-JSON response', [
-                'exception' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
-        $this->checkResponse($response, $parsed);
+        // Single dispatch through the error hook; when an override chooses
+        // not to throw, the leniently parsed body is returned as-is.
+        $this->throwOnResponseError($response, $parsed, $response->getStatusCode() >= 400);
 
         return $parsed;
     }
@@ -903,7 +993,9 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     private function isJwtContentType(ResponseInterface $response): bool
     {
-        $contentType = explode(';', $response->getHeaderLine('Content-Type'))[0];
+        // parent::getContentType() so this reads the header the same way
+        // parent::parseResponse() does
+        $contentType = explode(';', $this->getContentType($response))[0];
 
         return strtolower(trim($contentType)) === 'application/jwt';
     }
@@ -1156,14 +1248,19 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     protected function parseResponse(ResponseInterface $response): array
     {
-        $parsed = parent::parseResponse($response);
+        try {
+            $parsed = parent::parseResponse($response);
+        } catch (\UnexpectedValueException $e) {
+            $this->logNonJsonResponse($e->getMessage());
+            throw $e;
+        }
 
         // Parent can return string/null for non-JSON responses
         if (!is_array($parsed)) {
-            throw new \UnexpectedValueException(
-                'Invalid response from Authorization Server. Expected JSON object, got: ' .
-                (is_string($parsed) ? substr($parsed, 0, 100) : gettype($parsed))
-            );
+            $message = 'Invalid response from Authorization Server. Expected JSON object, got: ' .
+                (is_string($parsed) ? substr($parsed, 0, 100) : gettype($parsed));
+            $this->logNonJsonResponse($message);
+            throw new \UnexpectedValueException($message);
         }
 
         // Store ID token if present
@@ -1173,6 +1270,13 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         return $parsed;
+    }
+
+    private function logNonJsonResponse(string $reason): void
+    {
+        $this->logger->error('Request failed with non-JSON response', [
+            'exception' => $reason,
+        ]);
     }
 
     /**
@@ -1198,12 +1302,6 @@ class OpenIDConnectProvider extends AbstractProvider
                 $this->lastTokenParams = null; // Prevent infinite retry
                 return parent::getParsedResponse($retryRequest);
             }
-            throw $e;
-        } catch (\UnexpectedValueException $e) {
-            // Log raw response for debugging non-JSON responses
-            $this->logger->error('Request failed with non-JSON response', [
-                'exception' => $e->getMessage(),
-            ]);
             throw $e;
         }
     }
