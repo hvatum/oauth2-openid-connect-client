@@ -286,9 +286,16 @@ class OpenIDConnectProvider extends AbstractProvider
         // Initialize logger (use NullLogger if not provided)
         $this->logger = $collaborators['logger'] ?? new NullLogger();
 
-        // Validated manually below; league's option-to-property mass
-        // assignment must not write it onto the typed property unchecked.
-        $this->guarded[] = 'allowedAuthorizedParties';
+        // Options validated manually below; league's option-to-property mass
+        // assignment must not write them onto the typed properties unchecked
+        // (non-coercible values would surface as vendor TypeErrors).
+        array_push(
+            $this->guarded,
+            'allowedAuthorizedParties',
+            'enforceIssuerIdentification',
+            'jwksCacheTtl',
+            'wellKnownCacheTtl'
+        );
 
         parent::__construct($options, $collaborators);
 
@@ -316,20 +323,18 @@ class OpenIDConnectProvider extends AbstractProvider
             static::JWKS_CACHE_TTL
         );
 
-        // Optional: additional azp values accepted by isAcceptedAuthorizedParty().
-        // Validated before discovery so bad config fails without network I/O.
-        if (array_key_exists('allowedAuthorizedParties', $options)) {
-            $value = $options['allowedAuthorizedParties'];
-            // Empty strings rejected too: config like explode(',', '') yields
-            // [''] and would otherwise accept a JWT carrying azp: ""
-            $isNonEmptyString = static fn($v): bool => is_string($v) && $v !== '';
-            if (!is_array($value) || $value !== array_filter($value, $isNonEmptyString)) {
-                throw new \InvalidArgumentException(
-                    '`allowedAuthorizedParties` must be an array of non-empty strings'
-                );
-            }
-            $this->allowedAuthorizedParties = array_values($value);
-        }
+        // All option validation happens before discovery so bad config
+        // fails without network I/O
+        $this->allowedAuthorizedParties = $this->resolveStringListOption(
+            $options,
+            'allowedAuthorizedParties',
+            []
+        );
+        $this->enforceIssuerIdentification = $this->resolveBoolOption(
+            $options,
+            'enforceIssuerIdentification',
+            $this->enforceIssuerIdentification
+        );
 
         // Derive well-known URL from issuer, or use explicit override
         $this->expectedIssuer = $options['issuer'];
@@ -341,18 +346,6 @@ class OpenIDConnectProvider extends AbstractProvider
             'issuer' => $this->issuerUrl,
             'par_enabled' => $this->parUrl !== null,
         ]);
-
-        // Optional: Disable strict RFC 9207 enforcement
-        if (array_key_exists('enforceIssuerIdentification', $options)) {
-            $value = $options['enforceIssuerIdentification'];
-            if (!is_bool($value)) {
-                throw new \InvalidArgumentException(sprintf(
-                    '`enforceIssuerIdentification` must be a bool, got %s',
-                    get_debug_type($value)
-                ));
-            }
-            $this->enforceIssuerIdentification = $value;
-        }
 
         // Optional: Initialize client assertion (private_key_jwt). `privateKey`
         // and `privateKeyPath` are mutually exclusive; the helper resolves to
@@ -527,6 +520,46 @@ class OpenIDConnectProvider extends AbstractProvider
         }
 
         return $value;
+    }
+
+    protected function resolveBoolOption(array $options, string $optionName, bool $default): bool
+    {
+        if (!array_key_exists($optionName, $options)) {
+            return $default;
+        }
+
+        $value = $options[$optionName];
+        if (!is_bool($value)) {
+            throw new \InvalidArgumentException(sprintf(
+                '`%s` must be a bool, got %s',
+                $optionName,
+                get_debug_type($value)
+            ));
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param array<string> $default
+     * @return array<string>
+     */
+    protected function resolveStringListOption(array $options, string $optionName, array $default): array
+    {
+        if (!array_key_exists($optionName, $options)) {
+            return $default;
+        }
+
+        $value = $options[$optionName];
+        // Empty strings rejected too: config like explode(',', '') yields ['']
+        $isNonEmptyString = static fn($v): bool => is_string($v) && $v !== '';
+        if (!is_array($value) || $value !== array_filter($value, $isNonEmptyString)) {
+            throw new \InvalidArgumentException(
+                sprintf('`%s` must be an array of non-empty strings', $optionName)
+            );
+        }
+
+        return array_values($value);
     }
 
     /**

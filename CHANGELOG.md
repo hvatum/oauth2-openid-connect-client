@@ -59,6 +59,10 @@ Releases before 0.4.0 predate this file; see the git history for those.
 - Userinfo responses no longer update the stored DPoP nonce (RFC 9449 §9).
 - A userinfo body containing an `id_token` member can no longer replace
   the validated ID token from the token response.
+- Malformed constructor options (`jwksCacheTtl`, `wellKnownCacheTtl`,
+  `enforceIssuerIdentification`, `allowedAuthorizedParties`) now always
+  throw `InvalidArgumentException` before any network I/O; non-coercible
+  values previously surfaced as a `TypeError` from inside the base class.
 - Userinfo claim stripping is now uniform across content types: JWT
   envelope claims and protocol artifacts (`nonce`, `azp`, `at_hash`,
   `c_hash`) never reach the resource owner, while auth-context claims

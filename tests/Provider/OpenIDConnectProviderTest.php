@@ -876,6 +876,31 @@ final class OpenIDConnectProviderTest extends TestCase
         ]);
     }
 
+    public function testNonCoercibleJwksCacheTtlOptionThrowsInvalidArgument(): void
+    {
+        // Values PHP cannot coerce onto the typed property previously died
+        // as a TypeError inside league's mass assignment; the guarded
+        // option must reach the validator instead.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('jwksCacheTtl must be a non-negative integer');
+
+        $history = [];
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, ['jwksCacheTtl' => 'abc']);
+    }
+
+    public function testNonCoercibleEnforceIssuerIdentificationThrowsInvalidArgument(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('`enforceIssuerIdentification` must be a bool');
+
+        $history = [];
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, ['enforceIssuerIdentification' => []]);
+    }
+
     public function testJwksIsLoadedFromPsr16CacheOnSecondInstance(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();
