@@ -1241,6 +1241,29 @@ class OpenIDConnectProvider extends AbstractProvider
     }
 
     /**
+     * Store token-response ID token metadata before constructing the access token.
+     *
+     * UserInfo responses are arbitrary claim documents and may legally contain
+     * an `id_token` claim, so this must not happen in generic response parsing.
+     *
+     * @param array<string, mixed> $result
+     * @return array<string, mixed>
+     */
+    protected function prepareAccessTokenResponse(array $result)
+    {
+        if (isset($result['id_token'])) {
+            if (!is_string($result['id_token'])) {
+                throw new \UnexpectedValueException('Invalid response from Authorization Server. id_token must be a string');
+            }
+
+            $this->idToken = $result['id_token'];
+            $this->validatedIdTokenClaims = null;
+        }
+
+        return parent::prepareAccessTokenResponse($result);
+    }
+
+    /**
      * Parse the access token response
      *
      * @param ResponseInterface $response
@@ -1261,12 +1284,6 @@ class OpenIDConnectProvider extends AbstractProvider
                 (is_string($parsed) ? substr($parsed, 0, 100) : gettype($parsed));
             $this->logNonJsonResponse($message);
             throw new \UnexpectedValueException($message);
-        }
-
-        // Store ID token if present
-        if (isset($parsed['id_token'])) {
-            $this->idToken = $parsed['id_token'];
-            $this->validatedIdTokenClaims = null;
         }
 
         return $parsed;

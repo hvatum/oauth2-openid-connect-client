@@ -93,3 +93,5 @@ Releases before 0.4.0 predate this file; see the git history for those.
 - Non-string `error`/`error_description` values no longer cause a
   `TypeError`.
 - Userinfo responses no longer update the stored DPoP nonce (RFC 9449 §9).
+- A userinfo body containing an `id_token` member can no longer replace
+  the validated ID token from the token response.

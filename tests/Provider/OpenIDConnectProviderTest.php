@@ -1599,6 +1599,37 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getResourceOwner($token);
     }
 
+    public function testUserinfoIdTokenClaimDoesNotOverwriteTokenResponseIdToken(): void
+    {
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-123',
+            'aud' => 'client-123',
+            'exp' => time() + 3600,
+            'iat' => time(),
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(['id_token' => $idToken]),
+            new Response(200, ['Content-Type' => 'application/json'], json_encode([
+                'sub' => 'user-123',
+                'id_token' => 'garbage',
+                'name' => 'Alice',
+            ])),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+        $owner = $provider->getResourceOwner($token);
+
+        self::assertSame('user-123', $owner->getId());
+        self::assertSame('Alice', $owner->toArray()['name']);
+        self::assertSame($idToken, $provider->getIdToken());
+    }
+
     public function testUserinfoErrorStatusWithNonJsonBodyThrowsIdentityProviderException(): void
     {
         // A proxy 502 with an HTML body must honor getResourceOwner()'s
