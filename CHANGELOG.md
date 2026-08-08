@@ -10,6 +10,31 @@ Releases before 0.4.0 predate this file; see the git history for those.
 
 ## [Unreleased]
 
+### Added
+
+- Signed JWT userinfo responses (OIDC Core §5.3.2) are now verified and
+  decoded natively. When the userinfo endpoint responds with content-type
+  `application/jwt`, the compact JWS is verified against the provider JWKS
+  (with one forced-refresh retry to absorb key rotation), `iss`, `aud` and
+  `sub` are required and checked, `exp`/`nbf`/`iat` are checked when
+  present, and an `azp` claim naming a different client is rejected.
+  Multiple audiences without `azp` are accepted — OIDC Core §5.3.2 only
+  asks that `aud` be or include the client ID, unlike ID token validation
+  (§3.1.3.7) which keeps requiring `azp` for multiple audiences. The
+  accepted algorithms come from
+  the discovery document's `userinfo_signing_alg_values_supported`, falling
+  back to the id_token algorithms when absent or empty; both are intersected
+  with the algorithms this library can verify. The JWT envelope claims
+  (`iss`, `aud`, `exp`, `iat`, `nbf`, `jti`) and the ID-token transport
+  claims (`nonce`, `auth_time`, `azp`, `acr`, `amr`, `at_hash`, `c_hash`)
+  are stripped before the resource-owner merge, so the envelope cannot
+  clobber ID-token claims and the transport claims filtered from the ID
+  token cannot re-enter through userinfo. Encrypted (JWE) userinfo
+  responses are rejected with a clear error. Plain JSON userinfo behavior
+  is unchanged. Subclasses can override
+  `getUserinfoSigningAlgValuesSupported()` for servers that sign userinfo
+  with algorithms they do not advertise.
+
 ### Changed
 
 - **BREAKING:** The `client_assertion` `aud` claim now defaults to the issuer

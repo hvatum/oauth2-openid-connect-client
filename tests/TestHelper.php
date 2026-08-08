@@ -187,6 +187,18 @@ final class TestHelper
         return new Response($status, ['Content-Type' => 'application/json'], json_encode($body));
     }
 
+    /**
+     * A signed JWT userinfo response (OIDC Core §5.3.2), content-type application/jwt
+     */
+    public static function signedUserinfoResponse(
+        array $claims,
+        string $privateKey,
+        string $kid,
+        string $contentType = 'application/jwt'
+    ): Response {
+        return new Response(200, ['Content-Type' => $contentType], self::signIdToken($claims, $privateKey, $kid));
+    }
+
     public static function signIdToken(array $claims, string $privateKey, string $kid): string
     {
         // Convert PEM private key to JWK

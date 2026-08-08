@@ -161,6 +161,21 @@ $claims = $provider->validateIdToken($idTokenJwt, $expectedNonce);
 
 Validates: signature (ES256/384/512, RS256/384/512, PS256/384/512), issuer, audience, expiration, nonce, and more.
 
+### UserInfo Responses
+
+`getResourceOwner()` accepts both plain JSON userinfo responses and signed
+JWT responses (OIDC Core §5.3.2, content-type `application/jwt`). Signed
+responses are verified against the provider JWKS with the same algorithm
+allow-listing as ID tokens (`iss`, `aud` and `sub` required, time claims
+checked when present, an `azp` naming a different client rejected — though
+per OIDC Core §5.3.2 multiple audiences are accepted without `azp`, unlike
+ID tokens), and the JWT envelope and ID-token transport claims are stripped
+before the claims are merged with the ID token. Accepted algorithms come
+from `userinfo_signing_alg_values_supported` in discovery, falling back to
+the id_token algorithms — override `getUserinfoSigningAlgValuesSupported()`
+in a subclass for servers that sign userinfo with algorithms they do not
+advertise. Encrypted (JWE) userinfo responses are not supported.
+
 ### Caching
 
 Well-known configuration and JWKS keys are cached using PSR-16 (SimpleCache). TTL is managed by the cache implementation, so expiry works correctly across PHP-FPM requests.

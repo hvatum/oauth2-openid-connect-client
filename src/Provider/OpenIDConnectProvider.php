@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hvatum\OpenIDConnect\Client\Provider;
 
+use GuzzleHttp\Exception\BadResponseException;
 use League\OAuth2\Client\Provider\AbstractProvider;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use League\OAuth2\Client\Token\AccessToken;
@@ -93,6 +94,20 @@ class OpenIDConnectProvider extends AbstractProvider
     public const CLOCK_SKEW_LEEWAY = 60;
 
     /**
+     * ID-token transport claims that must not leak into the resource owner —
+     * they describe the authentication transaction, not the end user. Kept in
+     * one list so the ID-token filter in createResourceOwner() and the signed
+     * userinfo strip in decodeSignedUserinfoResponse() cannot drift apart.
+     */
+    private const TRANSPORT_CLAIMS = ['at_hash', 'c_hash', 'nonce', 'auth_time', 'azp', 'acr', 'amr'];
+
+    /**
+     * JWT envelope claims stripped from signed userinfo responses before the
+     * resource-owner merge, in addition to TRANSPORT_CLAIMS.
+     */
+    private const JWT_ENVELOPE_CLAIMS = ['iss', 'aud', 'exp', 'iat', 'nbf', 'jti'];
+
+    /**
      * Configured issuer identifier (from constructor option)
      */
     protected string $expectedIssuer;
@@ -131,6 +146,14 @@ class OpenIDConnectProvider extends AbstractProvider
      * @var array<string>
      */
     protected array $idTokenSigningAlgValuesSupported = ['RS256'];
+
+    /**
+     * Algorithms the server supports for signing userinfo responses
+     * (OIDC Core §5.3.2). OPTIONAL per OIDC Discovery; null means not
+     * advertised, in which case the id_token algorithms are assumed.
+     * @var array<string>|null
+     */
+    protected ?array $userinfoSigningAlgValuesSupported = null;
 
     /**
      * Algorithms the server supports for token endpoint auth signing.
@@ -791,8 +814,7 @@ class OpenIDConnectProvider extends AbstractProvider
                 );
             }
 
-            $transportClaims = ['at_hash', 'c_hash', 'nonce', 'auth_time', 'azp', 'acr', 'amr'];
-            $identityClaims = array_diff_key($idTokenClaims, array_flip($transportClaims));
+            $identityClaims = array_diff_key($idTokenClaims, array_flip(self::TRANSPORT_CLAIMS));
             $response = array_merge($identityClaims, $response);
         }
 
@@ -813,15 +835,193 @@ class OpenIDConnectProvider extends AbstractProvider
         // Userinfo endpoint uses Bearer authentication
         $request = $this->getAuthenticatedRequest(self::METHOD_GET, $url, $token);
 
-        $response = $this->getParsedResponse($request);
+        try {
+            $response = $this->getResponse($request);
+        } catch (BadResponseException $e) {
+            $response = $e->getResponse();
+        }
 
-        if (false === is_array($response)) {
-            throw new \UnexpectedValueException(
-                'Invalid response received from Authorization Server. Expected JSON.'
+        // OIDC Core §5.3.2: the server may return userinfo as a signed JWT
+        // instead of plain JSON, indicated by the application/jwt media type.
+        if ($this->isJwtContentType($response)) {
+            // Servers that pin the media type per-endpoint keep application/jwt
+            // on error statuses while sending a JSON error body — recover it so
+            // checkResponse() can surface error/error_description (and DPoP
+            // nonce detection keeps working) instead of the bare reason phrase.
+            $error = $response->getStatusCode() >= 400
+                ? json_decode((string) $response->getBody(), true)
+                : null;
+            $this->checkResponse($response, is_array($error) ? $error : []);
+            $this->logger->debug('UserInfo returned application/jwt; verifying signed response');
+            return $this->decodeSignedUserinfoResponse((string) $response->getBody());
+        }
+
+        try {
+            $parsed = $this->parseResponse($response);
+        } catch (\UnexpectedValueException $e) {
+            $this->logger->error('Request failed with non-JSON response', [
+                'exception' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+        $this->checkResponse($response, $parsed);
+
+        return $parsed;
+    }
+
+    /**
+     * Whether a response carries the application/jwt media type (RFC 7519 §10.3.1)
+     */
+    private function isJwtContentType(ResponseInterface $response): bool
+    {
+        $contentType = explode(';', $response->getHeaderLine('Content-Type'))[0];
+
+        return strtolower(trim($contentType)) === 'application/jwt';
+    }
+
+    /**
+     * Verify and decode a signed JWT userinfo response (OIDC Core §5.3.2)
+     *
+     * The signature is verified against the provider JWKS, iss/aud/sub are
+     * required and checked, and exp/nbf/iat are checked when present (the
+     * spec does not require them on userinfo responses). The JWT envelope
+     * and ID-token transport claims are stripped from the returned array so
+     * they can neither clobber ID-token claims in the resource-owner merge
+     * nor re-introduce claims createResourceOwner() deliberately filters;
+     * sub is kept for the §5.3.2 match against the ID token.
+     *
+     * @return array<string,mixed>
+     * @throws IdentityProviderException
+     */
+    protected function decodeSignedUserinfoResponse(string $jwt): array
+    {
+        $claims = $this->verifyJwsAgainstProviderKeys(
+            trim($jwt),
+            $this->getUserinfoSigningAlgValuesSupported(),
+            'UserInfo response'
+        );
+
+        $this->checkRegisteredClaims($claims, [], ['iss', 'sub', 'aud'], 'UserInfo', false);
+
+        return array_diff_key(
+            $claims,
+            array_flip(array_merge(self::JWT_ENVELOPE_CLAIMS, self::TRANSPORT_CLAIMS))
+        );
+    }
+
+    /**
+     * Validate registered claims on a decoded JWT payload.
+     *
+     * Shared by ID-token and signed-userinfo validation so hardening lands in
+     * both paths: issuer, audience and time-based checkers (with clock-skew
+     * leeway), the caller's mandatory-claim list, a non-empty string sub
+     * (OIDC Core §2), and azp screening whose strictness the caller picks
+     * via $requireAzpWithMultipleAudiences.
+     *
+     * @param array<string,mixed> $claims Decoded JWT claims
+     * @param array<\Jose\Component\Checker\ClaimChecker> $extraCheckers Additional checkers (e.g. NonceChecker)
+     * @param array<string> $mandatoryClaims Claim names that must be present
+     * @param string $label JWT type for error messages ('ID token', 'UserInfo')
+     * @param bool $requireAzpWithMultipleAudiences ID tokens with multiple audiences
+     *        must carry azp naming this client (OIDC Core §3.1.3.7). Signed userinfo
+     *        must not require that — §5.3.2 lets aud merely *include* the client with
+     *        no azp obligation — but a present azp naming a different party is
+     *        rejected on both paths.
+     * @throws IdentityProviderException
+     */
+    private function checkRegisteredClaims(
+        array $claims,
+        array $extraCheckers,
+        array $mandatoryClaims,
+        string $label,
+        bool $requireAzpWithMultipleAudiences
+    ): void {
+        try {
+            // PSR-20 clock required by web-token v4 time-based checkers
+            $clock = new class implements \Psr\Clock\ClockInterface {
+                public function now(): \DateTimeImmutable
+                {
+                    return new \DateTimeImmutable();
+                }
+            };
+            $claimCheckerManager = new ClaimCheckerManager(array_merge([
+                new IssuerChecker([$this->issuerUrl]),
+                new AudienceChecker($this->clientId),
+                new ExpirationTimeChecker($clock, static::CLOCK_SKEW_LEEWAY),
+                new NotBeforeChecker($clock, static::CLOCK_SKEW_LEEWAY),
+                new IssuedAtChecker($clock, static::CLOCK_SKEW_LEEWAY),
+            ], $extraCheckers));
+
+            $claimCheckerManager->check($claims, $mandatoryClaims);
+        } catch (MissingMandatoryClaimException $e) {
+            $this->logger->warning("{$label} missing mandatory claims", [
+                'reason' => $e->getMessage(),
+                'claims' => $e->getClaims(),
+            ]);
+            throw new IdentityProviderException(
+                "{$label} claim validation failed: " . $e->getMessage(),
+                0,
+                null
+            );
+        } catch (InvalidClaimException $e) {
+            $this->logger->warning("{$label} claim validation failed", [
+                'reason' => $e->getMessage(),
+                'claim' => $e->getClaim(),
+            ]);
+            throw new IdentityProviderException(
+                "{$label} claim validation failed: " . $e->getMessage(),
+                0,
+                null
+            );
+        } catch (\Throwable $e) {
+            $this->logger->warning("{$label} validation failed", [
+                'reason' => $e->getMessage(),
+            ]);
+            throw new IdentityProviderException(
+                "Failed to validate {$label}: " . $e->getMessage(),
+                0,
+                null
             );
         }
 
-        return $response;
+        if (!isset($claims['sub']) || !is_string($claims['sub']) || $claims['sub'] === '') {
+            throw new IdentityProviderException("{$label} missing required sub claim", 0, null);
+        }
+
+        // AudienceChecker passes on mere membership; azp decides whether a
+        // multi-audience JWT is actually meant for this client.
+        $audience = $claims['aud'] ?? [];
+        $audList = is_array($audience) ? $audience : [$audience];
+        $azp = $claims['azp'] ?? null;
+        if ($requireAzpWithMultipleAudiences) {
+            // OIDC Core §3.1.3.7: multiple audiences require azp = client_id
+            if (count($audList) > 1 && $azp !== $this->clientId) {
+                throw new IdentityProviderException("{$label} azp mismatch", 0, null);
+            }
+        } elseif ($azp !== null && $azp !== $this->clientId) {
+            // No azp requirement here, but a present azp naming a different
+            // party marks a JWT minted for someone else.
+            throw new IdentityProviderException("{$label} azp mismatch", 0, null);
+        }
+    }
+
+    /**
+     * Signing algorithms accepted for signed userinfo responses
+     *
+     * Falls back to the id_token algorithms when the server does not
+     * advertise userinfo_signing_alg_values_supported — a server signing
+     * userinfo uses the same JWKS, and the result is still intersected with
+     * what this library can verify. Override in provider-specific subclasses
+     * when a server signs userinfo with algorithms it does not advertise.
+     *
+     * @return array<string>
+     */
+    protected function getUserinfoSigningAlgValuesSupported(): array
+    {
+        // ?: (not ??) so an explicit empty userinfo_signing_alg_values_supported
+        // in discovery also falls back — an empty allow-list would reject every
+        // signed response with an error naming an empty server list.
+        return $this->userinfoSigningAlgValuesSupported ?: $this->idTokenSigningAlgValuesSupported;
     }
 
     /**
@@ -1172,17 +1372,71 @@ class OpenIDConnectProvider extends AbstractProvider
             );
         }
 
+        $decoded = $this->verifyJwsAgainstProviderKeys(
+            $idToken,
+            $this->idTokenSigningAlgValuesSupported,
+            'ID token'
+        );
+
+        // Mandatory claims per OIDC Core; add nonce when one was sent (§3.1.3.7).
+        // checkRegisteredClaims() only validates — $decoded is returned whole so
+        // callers keep claims beyond the explicitly checked ones.
+        $mandatoryClaims = ['iss', 'sub', 'aud', 'exp', 'iat'];
+        if ($nonce !== null) {
+            $mandatoryClaims[] = 'nonce';
+        }
+        $this->checkRegisteredClaims($decoded, [new NonceChecker($nonce)], $mandatoryClaims, 'ID token', true);
+
+        $this->logger->debug('ID token validated successfully', [
+            'sub' => $decoded['sub'],
+            'iss' => $decoded['iss'] ?? 'unknown',
+        ]);
+
+        return $decoded;
+    }
+
+    /**
+     * Parse a compact JWS, enforce the signing-algorithm allow-list, verify
+     * the signature against the provider JWKS (with one forced-refresh retry
+     * to absorb key rotation) and decode the payload.
+     *
+     * Claim validation is deliberately NOT done here — mandatory claims
+     * differ per JWT type (ID token vs userinfo response), so callers apply
+     * their own ClaimCheckerManager to the returned claims.
+     *
+     * @param array<string> $serverAlgorithms Algorithms the server advertises for this JWT type
+     * @param string $label Human-readable JWT type used in error messages ('ID token', 'UserInfo response')
+     * @return array<string,mixed> Decoded claims
+     * @throws IdentityProviderException
+     */
+    private function verifyJwsAgainstProviderKeys(string $jwt, array $serverAlgorithms, string $label): array
+    {
         if ($this->jwksUrl === null) {
-            throw new IdentityProviderException('JWKS URL not available for ID token validation', 0, null);
+            throw new IdentityProviderException("JWKS URL not available for {$label} validation", 0, null);
         }
 
         // Parse with serializer (avoid hand-rolled JWT decoding).
         $serializer = new CompactSerializer();
         try {
-            $jws = $serializer->unserialize($idToken);
+            $jws = $serializer->unserialize($jwt);
             $header = $jws->getSignature(0)->getProtectedHeader();
         } catch (\Throwable $e) {
-            throw new IdentityProviderException('Invalid ID token format', 0, null);
+            // Distinguish encrypted tokens from garbage: a JWE protected
+            // header carries an "enc" member (RFC 7516 §4.1.2). Decryption
+            // is not supported.
+            $protected = json_decode(
+                base64_decode(strtr(explode('.', $jwt)[0], '-_', '+/')) ?: '',
+                true
+            );
+            if (is_array($protected) && isset($protected['enc'])) {
+                throw new IdentityProviderException(
+                    "Encrypted (JWE) {$label}s are not supported. "
+                    . 'Configure the authorization server to use signed (JWS) responses instead.',
+                    0,
+                    null
+                );
+            }
+            throw new IdentityProviderException("Invalid {$label} format", 0, null);
         }
 
         // Algorithms this library can verify (prevent algorithm confusion attacks)
@@ -1195,13 +1449,13 @@ class OpenIDConnectProvider extends AbstractProvider
         // Intersect with what the server advertises (from discovery)
         $allowedAlgorithms = array_values(array_intersect(
             $librarySupported,
-            $this->idTokenSigningAlgValuesSupported
+            $serverAlgorithms
         ));
 
         if (empty($allowedAlgorithms)) {
             throw new IdentityProviderException(
-                'No mutually supported ID token signing algorithms. '
-                . 'Server supports: ' . implode(', ', $this->idTokenSigningAlgValuesSupported)
+                "No mutually supported {$label} signing algorithms. "
+                . 'Server supports: ' . implode(', ', $serverAlgorithms)
                 . '. Library supports: ' . implode(', ', $librarySupported),
                 0,
                 null
@@ -1211,12 +1465,12 @@ class OpenIDConnectProvider extends AbstractProvider
         $tokenAlg = $header['alg'] ?? null;
 
         if (!is_string($tokenAlg) || !in_array($tokenAlg, $allowedAlgorithms, true)) {
-            $this->logger->warning('ID token uses disallowed algorithm', [
+            $this->logger->warning("{$label} uses disallowed algorithm", [
                 'algorithm' => $tokenAlg,
                 'allowed' => $allowedAlgorithms,
             ]);
             throw new IdentityProviderException(
-                "Invalid ID token algorithm: '{$tokenAlg}'. Allowed: " . implode(', ', $allowedAlgorithms),
+                "Invalid {$label} algorithm: '{$tokenAlg}'. Allowed: " . implode(', ', $allowedAlgorithms),
                 0,
                 null
             );
@@ -1249,85 +1503,16 @@ class OpenIDConnectProvider extends AbstractProvider
             if (!is_array($decoded)) {
                 throw new \RuntimeException('Invalid payload');
             }
-
-            // Validate registered claims using claim checkers with clock skew
-            // PSR-20 clock required by web-token v4 time-based checkers
-            $clock = new class implements \Psr\Clock\ClockInterface {
-                public function now(): \DateTimeImmutable
-                {
-                    return new \DateTimeImmutable();
-                }
-            };
-            $claimCheckerManager = new ClaimCheckerManager([
-                new IssuerChecker([$this->issuerUrl]),
-                new AudienceChecker($this->clientId),
-                new ExpirationTimeChecker($clock, static::CLOCK_SKEW_LEEWAY),
-                new NotBeforeChecker($clock, static::CLOCK_SKEW_LEEWAY),
-                new IssuedAtChecker($clock, static::CLOCK_SKEW_LEEWAY),
-                new NonceChecker($nonce),
-            ]);
-
-            /* Validate claims (throws on failure)
-             * claimsChecker can return claims, but will
-             * only return claims that are explicitly validated.
-             *
-             * We keep $decoded and use that as return value
-             * in order to keep other claims as well
-             */
-
-            // Mandatory claims per OIDC Core; add nonce when one was sent (§3.1.3.7)
-            $mandatoryClaims = ['iss', 'sub', 'aud', 'exp', 'iat'];
-            if ($nonce !== null) {
-                $mandatoryClaims[] = 'nonce';
-            }
-            $claimCheckerManager->check($decoded, $mandatoryClaims);
-        } catch (MissingMandatoryClaimException $e) {
-            $this->logger->warning('ID token missing mandatory claims', [
-                'reason' => $e->getMessage(),
-                'claims' => $e->getClaims(),
-            ]);
-            throw new IdentityProviderException(
-                'ID token claim validation failed: ' . $e->getMessage(),
-                0,
-                null
-            );
-        } catch (InvalidClaimException $e) {
-            $this->logger->warning('ID token claim validation failed', [
-                'reason' => $e->getMessage(),
-                'claim' => method_exists($e, 'getClaim') ? $e->getClaim() : 'unknown',
-            ]);
-            throw new IdentityProviderException(
-                'ID token claim validation failed: ' . $e->getMessage(),
-                0,
-                null
-            );
         } catch (\Throwable $e) {
-            $this->logger->warning('ID token validation failed', [
+            $this->logger->warning("{$label} validation failed", [
                 'reason' => $e->getMessage(),
             ]);
             throw new IdentityProviderException(
-                'Failed to validate ID token: ' . $e->getMessage(),
+                "Failed to validate {$label}: " . $e->getMessage(),
                 0,
                 null
             );
         }
-
-        // Verify sub claim is present (OIDC Core Section 2)
-        if (!isset($decoded['sub']) || !is_string($decoded['sub'])) {
-            throw new IdentityProviderException('ID token missing required sub claim', 0, null);
-        }
-
-        // Verify azp when multiple audiences are present
-        $audience = $decoded['aud'] ?? [];
-        $audList = is_array($audience) ? $audience : [$audience];
-        if (count($audList) > 1 && ($decoded['azp'] ?? null) !== $this->clientId) {
-            throw new IdentityProviderException('ID token azp mismatch', 0, null);
-        }
-
-        $this->logger->debug('ID token validated successfully', [
-            'sub' => $decoded['sub'],
-            'iss' => $decoded['iss'] ?? 'unknown',
-        ]);
 
         return $decoded;
     }

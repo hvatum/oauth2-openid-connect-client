@@ -200,6 +200,10 @@ trait WellKnownConfigTrait
             'id_token_signing_alg_values_supported',
             ['RS256']
         );
+        $this->userinfoSigningAlgValuesSupported = $this->getNullableStringArrayMetadata(
+            $config,
+            'userinfo_signing_alg_values_supported'
+        );
         $this->tokenEndpointAuthSigningAlgValuesSupported = $this->getNullableStringArrayMetadata(
             $config,
             'token_endpoint_auth_signing_alg_values_supported'
