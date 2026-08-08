@@ -124,9 +124,10 @@ final class SignedUserinfoTest extends TestCase
 
         // Swap the payload for different claims, keeping the original signature
         $parts = explode('.', $jwt);
-        $parts[1] = rtrim(strtr(base64_encode(json_encode(
-            $this->userinfoClaims(['sub' => 'attacker'])
-        )), '+/', '-_'), '=');
+        $parts[1] = TestHelper::base64UrlEncode(json_encode(
+            $this->userinfoClaims(['sub' => 'attacker']),
+            JSON_UNESCAPED_SLASHES
+        ));
         $tampered = implode('.', $parts);
 
         $history = [];
@@ -238,9 +239,10 @@ final class SignedUserinfoTest extends TestCase
     public function testSignedUserinfoRejectsJweResponse(): void
     {
         // A compact JWE: five segments, protected header with an "enc" member
-        $jweHeader = rtrim(strtr(base64_encode(json_encode(
-            ['alg' => 'RSA-OAEP', 'enc' => 'A256GCM']
-        )), '+/', '-_'), '=');
+        $jweHeader = TestHelper::base64UrlEncode(json_encode(
+            ['alg' => 'RSA-OAEP', 'enc' => 'A256GCM'],
+            JSON_UNESCAPED_SLASHES
+        ));
 
         $history = [];
         $provider = TestHelper::basicProvider([

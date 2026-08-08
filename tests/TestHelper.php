@@ -11,6 +11,7 @@ use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use Jose\Component\Core\AlgorithmManager;
 use Jose\Component\Core\JWK;
+use Jose\Component\Core\Util\Base64UrlSafe;
 use Jose\Component\Signature\Algorithm\ES256;
 use Jose\Component\Signature\JWSBuilder;
 use Jose\Component\Signature\Serializer\CompactSerializer;
@@ -169,22 +170,23 @@ final class TestHelper
         return $path;
     }
 
+    public static function base64UrlEncode(string $data): string
+    {
+        return Base64UrlSafe::encodeUnpadded($data);
+    }
+
     /**
      * Build a raw JWT with an arbitrary header (for algorithm confusion tests).
      * The signature is faked — this is for testing header validation, not crypto.
      */
     public static function buildRawJwt(array $header, array $payload): string
     {
-        $encode = fn(array $data) => rtrim(strtr(
-            base64_encode(json_encode($data, JSON_UNESCAPED_SLASHES)),
-            '+/',
-            '-_'
-        ), '=');
+        $encode = fn(array $data) => self::base64UrlEncode(json_encode($data, JSON_UNESCAPED_SLASHES));
 
         $h = $encode($header);
         $p = $encode($payload);
         // Fake signature (non-empty so it looks like a real compact JWT)
-        $s = rtrim(strtr(base64_encode('fake-signature'), '+/', '-_'), '=');
+        $s = self::base64UrlEncode('fake-signature');
 
         return "{$h}.{$p}.{$s}";
     }
