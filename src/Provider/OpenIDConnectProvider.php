@@ -196,6 +196,14 @@ class OpenIDConnectProvider extends AbstractProvider
     protected bool $enforceIssuerIdentification = true;
 
     /**
+     * Additional azp (authorized party) values accepted by
+     * isAcceptedAuthorizedParty(), from the `allowedAuthorizedParties`
+     * constructor option. This client's own ID is always accepted.
+     * @var array<string>
+     */
+    protected array $allowedAuthorizedParties = [];
+
+    /**
      * ID token from last token response
      */
     protected ?string $idToken = null;
@@ -237,6 +245,8 @@ class OpenIDConnectProvider extends AbstractProvider
      * - cacheDir: Custom cache directory (used when no PSR-16 cache is provided)
      * - wellKnownCacheTtl: Discovery metadata cache TTL in seconds (non-negative integer)
      * - jwksCacheTtl: JWKS cache TTL in seconds (non-negative integer)
+     * - allowedAuthorizedParties: Additional azp values accepted during JWT
+     *   validation (array of non-empty strings); see isAcceptedAuthorizedParty()
      *
      * @param array $options Provider configuration options
      * @param array $collaborators Optional collaborators (httpClient, requestFactory, logger, cache)
@@ -249,6 +259,10 @@ class OpenIDConnectProvider extends AbstractProvider
 
         // Initialize logger (use NullLogger if not provided)
         $this->logger = $collaborators['logger'] ?? new NullLogger();
+
+        // Validated manually below; league's option-to-property mass
+        // assignment must not write it onto the typed property unchecked.
+        $this->guarded[] = 'allowedAuthorizedParties';
 
         parent::__construct($options, $collaborators);
 
@@ -275,6 +289,21 @@ class OpenIDConnectProvider extends AbstractProvider
             'jwksCacheTtl',
             static::JWKS_CACHE_TTL
         );
+
+        // Optional: additional azp values accepted by isAcceptedAuthorizedParty().
+        // Validated before discovery so bad config fails without network I/O.
+        if (array_key_exists('allowedAuthorizedParties', $options)) {
+            $value = $options['allowedAuthorizedParties'];
+            // Empty strings rejected too: config like explode(',', '') yields
+            // [''] and would otherwise accept a JWT carrying azp: ""
+            $isNonEmptyString = static fn($v): bool => is_string($v) && $v !== '';
+            if (!is_array($value) || $value !== array_filter($value, $isNonEmptyString)) {
+                throw new \InvalidArgumentException(
+                    '`allowedAuthorizedParties` must be an array of non-empty strings'
+                );
+            }
+            $this->allowedAuthorizedParties = array_values($value);
+        }
 
         // Derive well-known URL from issuer, or use explicit override
         $this->expectedIssuer = $options['issuer'];
@@ -901,7 +930,7 @@ class OpenIDConnectProvider extends AbstractProvider
             'UserInfo response'
         );
 
-        $this->checkRegisteredClaims($claims, [], ['iss', 'sub', 'aud'], 'UserInfo', false);
+        $this->checkRegisteredClaims($claims, [], ['iss', 'sub', 'aud'], 'UserInfo response', false);
 
         return array_diff_key(
             $claims,
@@ -915,18 +944,16 @@ class OpenIDConnectProvider extends AbstractProvider
      * Shared by ID-token and signed-userinfo validation so hardening lands in
      * both paths: issuer, audience and time-based checkers (with clock-skew
      * leeway), the caller's mandatory-claim list, a non-empty string sub
-     * (OIDC Core §2), and azp screening whose strictness the caller picks
-     * via $requireAzpWithMultipleAudiences.
+     * (OIDC Core §2), and azp screening — a present azp not accepted by
+     * isAcceptedAuthorizedParty() is rejected on both paths.
      *
      * @param array<string,mixed> $claims Decoded JWT claims
      * @param array<\Jose\Component\Checker\ClaimChecker> $extraCheckers Additional checkers (e.g. NonceChecker)
      * @param array<string> $mandatoryClaims Claim names that must be present
-     * @param string $label JWT type for error messages ('ID token', 'UserInfo')
-     * @param bool $requireAzpWithMultipleAudiences ID tokens with multiple audiences
-     *        must carry azp naming this client (OIDC Core §3.1.3.7). Signed userinfo
-     *        must not require that — §5.3.2 lets aud merely *include* the client with
-     *        no azp obligation — but a present azp naming a different party is
-     *        rejected on both paths.
+     * @param string $label JWT type for error messages ('ID token', 'UserInfo response')
+     * @param bool $requireAzpWithMultipleAudiences Whether multiple audiences require
+     *        azp naming this client itself (conservative policy for ID tokens;
+     *        signed userinfo does not require it, per OIDC Core §5.3.2)
      * @throws IdentityProviderException
      */
     private function checkRegisteredClaims(
@@ -984,25 +1011,62 @@ class OpenIDConnectProvider extends AbstractProvider
             );
         }
 
-        if (!isset($claims['sub']) || !is_string($claims['sub']) || $claims['sub'] === '') {
-            throw new IdentityProviderException("{$label} missing required sub claim", 0, null);
+        // Presence is enforced by the mandatory list; this adds the type check
+        if (!is_string($claims['sub'] ?? null) || $claims['sub'] === '') {
+            throw new IdentityProviderException("{$label} sub claim must be a non-empty string", 0, null);
         }
 
-        // AudienceChecker passes on mere membership; azp decides whether a
-        // multi-audience JWT is actually meant for this client.
-        $audience = $claims['aud'] ?? [];
-        $audList = is_array($audience) ? $audience : [$audience];
+        // A present azp naming an unaccepted party marks a JWT minted for a
+        // different client (OIDC Core §3.1.3.7 #5)
         $azp = $claims['azp'] ?? null;
-        if ($requireAzpWithMultipleAudiences) {
-            // OIDC Core §3.1.3.7: multiple audiences require azp = client_id
-            if (count($audList) > 1 && $azp !== $this->clientId) {
-                throw new IdentityProviderException("{$label} azp mismatch", 0, null);
-            }
-        } elseif ($azp !== null && $azp !== $this->clientId) {
-            // No azp requirement here, but a present azp naming a different
-            // party marks a JWT minted for someone else.
+        if ($azp !== null && !$this->isAcceptedAuthorizedParty($azp)) {
             throw new IdentityProviderException("{$label} azp mismatch", 0, null);
         }
+
+        // Local conservative policy, not literal spec wording: OIDC Core
+        // §3.1.3.7 requires additional audiences to be trusted by the client.
+        // A multi-audience JWT must name this client as the authorized party
+        // — deliberately NOT the allow-list: an accepted foreign presenter is
+        // only trusted with tokens minted solely for this client, not with
+        // tokens minted for the presenter itself that happen to co-audience
+        // us. That holds on both paths whenever azp is present; only ID
+        // tokens additionally demand azp for multi-audience (userinfo may
+        // omit it, per §5.3.2).
+        if (count((array) ($claims['aud'] ?? [])) > 1
+            && $azp !== $this->clientId
+            && ($azp !== null || $requireAzpWithMultipleAudiences)
+        ) {
+            throw new IdentityProviderException(
+                "{$label} azp must name this client when multiple audiences are present",
+                0,
+                null
+            );
+        }
+    }
+
+    /**
+     * Whether an azp (authorized party) claim value is acceptable.
+     *
+     * Default: this client's ID, plus any IDs given in the
+     * `allowedAuthorizedParties` constructor option. OIDC Core §3.1.3.7 (as
+     * revised by the errata) leaves azp validation to the extension that put
+     * the claim there, and some deployments legitimately present a different
+     * party — e.g. Google hybrid app flows set azp to the native app's
+     * client ID while aud names the web client.
+     *
+     * Applies to both ID tokens and signed userinfo responses, and only to
+     * single-audience JWTs: a multi-audience JWT must carry azp naming this
+     * client itself — the allow-list cannot loosen that. Override for
+     * policies a static list cannot express (pattern matching, per-tenant
+     * lookups).
+     *
+     * @param mixed $azp Raw azp claim value
+     * @return bool
+     */
+    protected function isAcceptedAuthorizedParty($azp): bool
+    {
+        return $azp === $this->clientId
+            || in_array($azp, $this->allowedAuthorizedParties, true);
     }
 
     /**

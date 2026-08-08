@@ -17,7 +17,8 @@ Releases before 0.4.0 predate this file; see the git history for those.
   `application/jwt`, the compact JWS is verified against the provider JWKS
   (with one forced-refresh retry to absorb key rotation), `iss`, `aud` and
   `sub` are required and checked, `exp`/`nbf`/`iat` are checked when
-  present, and an `azp` claim naming a different client is rejected.
+  present, and an unaccepted `azp` claim (by default anything other than
+  this client's ID; see `allowedAuthorizedParties`) is rejected.
   Multiple audiences without `azp` are accepted — OIDC Core §5.3.2 only
   asks that `aud` be or include the client ID, unlike ID token validation
   (§3.1.3.7) which keeps requiring `azp` for multiple audiences. The
@@ -36,6 +37,20 @@ Releases before 0.4.0 predate this file; see the git history for those.
   with algorithms they do not advertise.
 
 ### Changed
+
+- **BREAKING:** ID tokens carrying an `azp` claim whose value is not
+  accepted — anything other than this client's ID by default, including
+  type-mismatched values such as numeric client IDs — are now rejected
+  even when the token has a single audience. Previously `azp` was only
+  checked for multi-audience tokens. OIDC Core §3.1.3.7 leaves `azp`
+  validation to the extension that produced the claim, so deployments
+  where a different `azp` is legitimate (e.g. Google-style hybrid app
+  flows) can pass the `allowedAuthorizedParties` constructor option or
+  override the `isAcceptedAuthorizedParty()` hook. An allow-listed foreign
+  `azp` is only accepted on single-audience JWTs, and multi-audience ID
+  tokens still require `azp` to name this client itself. Several validation
+  error message texts also changed (`azp` failures, non-string `sub`
+  values, and the "UserInfo" label is now "UserInfo response").
 
 - **BREAKING:** The `client_assertion` `aud` claim now defaults to the issuer
   identifier instead of the token endpoint URL. This applies to token requests

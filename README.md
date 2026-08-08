@@ -167,9 +167,10 @@ Validates: signature (ES256/384/512, RS256/384/512, PS256/384/512), issuer, audi
 JWT responses (OIDC Core §5.3.2, content-type `application/jwt`). Signed
 responses are verified against the provider JWKS with the same algorithm
 allow-listing as ID tokens (`iss`, `aud` and `sub` required, time claims
-checked when present, an `azp` naming a different client rejected — though
-per OIDC Core §5.3.2 multiple audiences are accepted without `azp`, unlike
-ID tokens), and the JWT envelope and ID-token transport claims are stripped
+checked when present, an unaccepted `azp` rejected (see [Authorized party
+validation](#authorized-party-azp-validation)) — though per OIDC Core
+§5.3.2 multiple audiences are accepted without `azp`, unlike ID
+tokens), and the JWT envelope and ID-token transport claims are stripped
 before the claims are merged with the ID token. Accepted algorithms come
 from `userinfo_signing_alg_values_supported` in discovery, falling back to
 the id_token algorithms — override `getUserinfoSigningAlgValuesSupported()`
@@ -251,6 +252,28 @@ class MyProvider extends OpenIDConnectProvider
     }
 }
 ```
+
+### Authorized party (azp) validation
+
+An unaccepted `azp` claim fails validation on both ID tokens and signed
+userinfo responses; by default only this client's own ID is accepted. For
+deployments where a foreign `azp` is legitimate — e.g. Google-style hybrid
+app flows, where `azp` names the native app while `aud` names this client —
+pass the allow-list as an option:
+
+```php
+new MyProvider([
+    // ...
+    'allowedAuthorizedParties' => ['native-app-client-id'],
+]);
+```
+
+or override `isAcceptedAuthorizedParty()` for policies a static list cannot
+express. An allow-listed foreign `azp` is only accepted on single-audience
+JWTs, and multi-audience ID tokens always require `azp` to name this client
+itself — the allow-list does not loosen either rule.
+
+### Client assertion audience
 
 The client assertion `aud` claim defaults to the issuer identifier, as required by
 [draft-ietf-oauth-rfc7523bis](https://datatracker.ietf.org/doc/draft-ietf-oauth-rfc7523bis/) §4

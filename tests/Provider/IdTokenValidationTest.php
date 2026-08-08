@@ -518,6 +518,145 @@ final class IdTokenValidationTest extends TestCase
         $provider->validateIdToken($idToken);
     }
 
+    public function testSingleAudienceWithForeignAzpRejected(): void
+    {
+        // OIDC Core §3.1.3.7 #5: a present azp naming another client is
+        // rejected regardless of audience count
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'azp' => 'other-client',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('ID token azp mismatch');
+        $provider->validateIdToken($idToken);
+    }
+
+    public function testAllowedAuthorizedPartiesOptionAcceptsForeignAzp(): void
+    {
+        // Google-style hybrid flow: aud names this client, azp names the
+        // native app, allow-listed via the constructor option.
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'azp' => 'trusted-native-app',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history, ['allowedAuthorizedParties' => ['trusted-native-app']]);
+
+        $provider->setNonce('n-1');
+
+        $result = $provider->validateIdToken($idToken);
+        self::assertSame('user-1', $result['sub']);
+        self::assertSame('trusted-native-app', $result['azp']);
+    }
+
+    public function testSubclassHookCanAcceptForeignAzp(): void
+    {
+        // isAcceptedAuthorizedParty() is overridable for policies a static
+        // allow-list cannot express
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => 'client-123',
+            'azp' => 'hook-accepted-app',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history, [], \Hvatum\OpenIDConnect\Client\Test\AzpAllowListTestProvider::class);
+
+        $provider->setNonce('n-1');
+
+        $result = $provider->validateIdToken($idToken);
+        self::assertSame('user-1', $result['sub']);
+    }
+
+    /**
+     * @dataProvider malformedAllowedAuthorizedPartiesProvider
+     */
+    public function testMalformedAllowedAuthorizedPartiesOptionRejected($value): void
+    {
+        $history = [];
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('allowedAuthorizedParties');
+        TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+        ], $history, ['allowedAuthorizedParties' => $value]);
+    }
+
+    public static function malformedAllowedAuthorizedPartiesProvider(): array
+    {
+        return [
+            'not an array' => ['not-an-array'],
+            'non-string element' => [['ok', 123]],
+            'empty-string element (explode of empty env var)' => [['']],
+        ];
+    }
+
+    public function testAllowListedAzpDoesNotSatisfyMultiAudienceRule(): void
+    {
+        // An allow-listed presenter is trusted with tokens minted solely for
+        // this client; a multi-audience token minted for the presenter itself
+        // must still name this client as the authorized party.
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $idToken = TestHelper::signIdToken([
+            'iss' => 'https://idp.test',
+            'sub' => 'user-1',
+            'aud' => ['client-123', 'trusted-native-app'],
+            'azp' => 'trusted-native-app',
+            'exp' => time() + 3600,
+            'iat' => time(),
+            'nonce' => 'n-1',
+        ], $private, $jwk['kid']);
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::jwksResponse($jwk),
+        ], $history, ['allowedAuthorizedParties' => ['trusted-native-app']]);
+
+        $provider->setNonce('n-1');
+
+        $this->expectException(\League\OAuth2\Client\Provider\Exception\IdentityProviderException::class);
+        $this->expectExceptionMessage('azp must name this client');
+        $provider->validateIdToken($idToken);
+    }
+
     public function testMultipleAudiencesWithMissingAzp(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();

@@ -69,13 +69,20 @@ final class TestHelper
 
     /**
      * Create a provider with issuer (no client assertion, no DPoP)
+     *
+     * @param class-string<TestProvider> $providerClass Provider class to
+     *        instantiate; must extend TestProvider
      */
-    public static function basicProvider(array $responses, array &$history, array $options = []): TestProvider
-    {
+    public static function basicProvider(
+        array $responses,
+        array &$history,
+        array $options = [],
+        string $providerClass = TestProvider::class
+    ): TestProvider {
         $httpClient = self::httpClient($responses, $history);
         $requestFactory = new RequestFactory();
 
-        $provider = new TestProvider(array_merge([
+        $provider = new $providerClass(array_merge([
             'clientId' => 'client-123',
             'clientSecret' => 'secret-456',
             'redirectUri' => 'https://app.example/callback',
@@ -92,8 +99,12 @@ final class TestHelper
     /**
      * Create a provider with client assertion and DPoP configured
      */
-    public static function fullProvider(array $responses, array &$history, array $options = []): TestProvider
-    {
+    public static function fullProvider(
+        array $responses,
+        array &$history,
+        array $options = [],
+        string $providerClass = TestProvider::class
+    ): TestProvider {
         // Auto-generate client assertion key if neither option is provided
         if (!isset($options['privateKeyPath']) && !isset($options['privateKey'])) {
             [$privateKey, , $jwk] = self::generateEcKeyPair();
@@ -120,7 +131,7 @@ final class TestHelper
         // Remove clientSecret since we're using client assertion
         unset($options['clientSecret']);
 
-        return self::basicProvider($responses, $history, $options);
+        return self::basicProvider($responses, $history, $options, $providerClass);
     }
 
     public static function generateEcKeyPair(): array

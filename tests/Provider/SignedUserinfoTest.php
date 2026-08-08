@@ -174,23 +174,23 @@ final class SignedUserinfoTest extends TestCase
 
     public function testSignedUserinfoRejectsMissingSub(): void
     {
-        $this->assertClaimRejection(['sub' => null], 'UserInfo claim validation failed');
+        $this->assertClaimRejection(['sub' => null], 'UserInfo response claim validation failed');
     }
 
     public function testSignedUserinfoRejectsMissingIss(): void
     {
-        $this->assertClaimRejection(['iss' => null], 'UserInfo claim validation failed');
+        $this->assertClaimRejection(['iss' => null], 'UserInfo response claim validation failed');
     }
 
     public function testSignedUserinfoRejectsWrongAudience(): void
     {
-        $this->assertClaimRejection(['aud' => 'other-client'], 'UserInfo claim validation failed');
+        $this->assertClaimRejection(['aud' => 'other-client'], 'UserInfo response claim validation failed');
     }
 
     public function testSignedUserinfoRejectsExpiredExp(): void
     {
         // exp is not required on userinfo responses, but when present it is enforced
-        $this->assertClaimRejection(['exp' => time() - 3600], 'UserInfo claim validation failed');
+        $this->assertClaimRejection(['exp' => time() - 3600], 'UserInfo response claim validation failed');
     }
 
     private function assertClaimRejection(array $claimOverrides, string $expectedMessage): void
@@ -397,7 +397,7 @@ final class SignedUserinfoTest extends TestCase
         $token = $provider->getAccessToken('client_credentials');
 
         $this->expectException(IdentityProviderException::class);
-        $this->expectExceptionMessage('UserInfo azp mismatch');
+        $this->expectExceptionMessage('UserInfo response azp mismatch');
         $provider->getResourceOwner($token);
     }
 
@@ -440,7 +440,56 @@ final class SignedUserinfoTest extends TestCase
         $token = $provider->getAccessToken('client_credentials');
 
         $this->expectException(IdentityProviderException::class);
-        $this->expectExceptionMessage('UserInfo azp mismatch');
+        $this->expectExceptionMessage('UserInfo response azp mismatch');
+        $provider->getResourceOwner($token);
+    }
+
+    public function testSignedUserinfoHonorsAllowedAuthorizedParties(): void
+    {
+        // The azp acceptance policy governs userinfo too, so an allow-listed
+        // foreign azp passes; it is still stripped from the resource owner
+        // as a transport claim.
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            TestHelper::signedUserinfoResponse($this->userinfoClaims([
+                'azp' => 'trusted-native-app',
+            ]), $private, $jwk['kid']),
+            TestHelper::jwksResponse($jwk),
+        ], $history, ['allowedAuthorizedParties' => ['trusted-native-app']]);
+
+        $token = $provider->getAccessToken('client_credentials');
+        $owner = $provider->getResourceOwner($token);
+
+        self::assertSame('user-123', $owner->getId());
+        self::assertArrayNotHasKey('azp', $owner->toArray());
+    }
+
+    public function testSignedUserinfoRejectsAllowListedAzpWithMultipleAudiences(): void
+    {
+        // Same invariant as ID tokens: an allow-listed presenter is trusted
+        // with tokens minted solely for this client, not with multi-audience
+        // tokens minted for the presenter itself.
+        [$private, , $jwk] = TestHelper::generateEcKeyPair();
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            TestHelper::signedUserinfoResponse($this->userinfoClaims([
+                'aud' => ['client-123', 'trusted-native-app'],
+                'azp' => 'trusted-native-app',
+            ]), $private, $jwk['kid']),
+            TestHelper::jwksResponse($jwk),
+        ], $history, ['allowedAuthorizedParties' => ['trusted-native-app']]);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('azp must name this client');
         $provider->getResourceOwner($token);
     }
 
