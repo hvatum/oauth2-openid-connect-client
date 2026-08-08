@@ -103,16 +103,21 @@ class OpenIDConnectProvider extends AbstractProvider
     public const JWKS_FORCED_REFRESH_COOLDOWN = 60;
 
     /**
-     * ID-token transport claims that must not leak into the resource owner —
-     * they describe the authentication transaction, not the end user. Kept in
-     * one list so the ID-token filter in createResourceOwner() and the signed
-     * userinfo strip in decodeSignedUserinfoResponse() cannot drift apart.
+     * Protocol artifacts with no consumer meaning; never reach the
+     * resource owner.
      */
-    private const TRANSPORT_CLAIMS = ['at_hash', 'c_hash', 'nonce', 'auth_time', 'azp', 'acr', 'amr'];
+    private const PROTOCOL_ARTIFACT_CLAIMS = ['at_hash', 'c_hash', 'nonce', 'azp'];
 
     /**
-     * JWT envelope claims stripped from signed userinfo responses before the
-     * resource-owner merge, in addition to TRANSPORT_CLAIMS.
+     * Auth-context claims: filtered from the ID-token side of the merge,
+     * kept when userinfo provides them (OIDC Core §5.5). From userinfo they
+     * describe the session at query time, which can drift from the login
+     * event the ID token asserted.
+     */
+    private const AUTH_CONTEXT_CLAIMS = ['auth_time', 'acr', 'amr'];
+
+    /**
+     * JWT envelope claims; stripped from userinfo before the merge.
      */
     private const JWT_ENVELOPE_CLAIMS = ['iss', 'aud', 'exp', 'iat', 'nbf', 'jti'];
 
@@ -930,9 +935,15 @@ class OpenIDConnectProvider extends AbstractProvider
      */
     protected function createResourceOwner(array $response, AccessToken $token): OpenIDConnectResourceOwner
     {
-        // Merge ID token claims with userinfo response (OIDC Core §5.3.2)
-        // Userinfo takes precedence — it has richer identity data.
-        // Filter out transport claims from ID token that shouldn't pollute the resource owner.
+        // Uniform for all userinfo content types; sub survives for the
+        // §5.3.2 match below
+        $response = array_diff_key(
+            $response,
+            array_flip(array_merge(self::JWT_ENVELOPE_CLAIMS, self::PROTOCOL_ARTIFACT_CLAIMS))
+        );
+
+        // Merge ID token claims with userinfo (OIDC Core §5.3.2); userinfo
+        // takes precedence
         if ($this->idToken !== null) {
             $idTokenClaims = $this->getValidatedIdTokenClaims();
 
@@ -945,7 +956,10 @@ class OpenIDConnectProvider extends AbstractProvider
                 );
             }
 
-            $identityClaims = array_diff_key($idTokenClaims, array_flip(self::TRANSPORT_CLAIMS));
+            $identityClaims = array_diff_key(
+                $idTokenClaims,
+                array_flip(array_merge(self::PROTOCOL_ARTIFACT_CLAIMS, self::AUTH_CONTEXT_CLAIMS))
+            );
             $response = array_merge($identityClaims, $response);
         }
 
@@ -1025,11 +1039,7 @@ class OpenIDConnectProvider extends AbstractProvider
      *
      * The signature is verified against the provider JWKS, iss/aud/sub are
      * required and checked, and exp/nbf/iat are checked when present (the
-     * spec does not require them on userinfo responses). The JWT envelope
-     * and ID-token transport claims are stripped from the returned array so
-     * they can neither clobber ID-token claims in the resource-owner merge
-     * nor re-introduce claims createResourceOwner() deliberately filters;
-     * sub is kept for the §5.3.2 match against the ID token.
+     * spec does not require them on userinfo responses).
      *
      * @return array<string,mixed>
      * @throws IdentityProviderException
@@ -1044,10 +1054,8 @@ class OpenIDConnectProvider extends AbstractProvider
 
         $this->checkRegisteredClaims($claims, [], ['iss', 'sub', 'aud'], 'UserInfo response', false);
 
-        return array_diff_key(
-            $claims,
-            array_flip(array_merge(self::JWT_ENVELOPE_CLAIMS, self::TRANSPORT_CLAIMS))
-        );
+        // Claim stripping happens in createResourceOwner()
+        return $claims;
     }
 
     /**

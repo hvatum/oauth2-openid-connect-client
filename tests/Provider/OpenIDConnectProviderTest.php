@@ -1599,6 +1599,42 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getResourceOwner($token);
     }
 
+    public function testJsonUserinfoStripsArtifactsButKeepsAuthContextClaims(): void
+    {
+        // Same stripping as signed userinfo: consumer-visible claims must
+        // not differ by the server's choice of response content type.
+        // Envelope and protocol artifacts go; auth-context claims the OP
+        // chose to expose via userinfo (OIDC Core §5.5) stay.
+        $authTime = time() - 30;
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(200, ['Content-Type' => 'application/json'], json_encode([
+                'sub' => 'user-123',
+                'name' => 'Alice',
+                'nonce' => 'replayed',
+                'auth_time' => $authTime,
+                'acr' => 'urn:mace:incommon:iap:silver',
+                'amr' => ['pwd'],
+                'azp' => 'client-123',
+                'exp' => time() + 100,
+                'nbf' => time() - 5,
+            ])),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+        $owner = $provider->getResourceOwner($token)->toArray();
+
+        self::assertSame('Alice', $owner['name']);
+        foreach (['nonce', 'azp', 'exp', 'nbf'] as $claim) {
+            self::assertArrayNotHasKey($claim, $owner);
+        }
+        self::assertSame($authTime, $owner['auth_time']);
+        self::assertSame('urn:mace:incommon:iap:silver', $owner['acr']);
+        self::assertSame(['pwd'], $owner['amr']);
+    }
+
     public function testUserinfoIdTokenClaimDoesNotOverwriteTokenResponseIdToken(): void
     {
         [$private, , $jwk] = TestHelper::generateEcKeyPair();

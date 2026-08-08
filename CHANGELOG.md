@@ -59,6 +59,11 @@ Releases before 0.4.0 predate this file; see the git history for those.
 - Userinfo responses no longer update the stored DPoP nonce (RFC 9449 §9).
 - A userinfo body containing an `id_token` member can no longer replace
   the validated ID token from the token response.
+- Userinfo claim stripping is now uniform across content types: JWT
+  envelope claims and protocol artifacts (`nonce`, `azp`, `at_hash`,
+  `c_hash`) never reach the resource owner, while auth-context claims
+  (`auth_time`, `acr`, `amr`) provided by the userinfo endpoint are now
+  kept — previously signed responses dropped them.
 - The forced JWKS refresh after a signature failure with an already-known
   `kid` is rate-limited (at most one per 60s); an unknown `kid` — the key
   rotation signal — always refreshes. Parsed key sets, claim checkers and
