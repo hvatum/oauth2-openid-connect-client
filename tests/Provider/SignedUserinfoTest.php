@@ -258,6 +258,29 @@ final class SignedUserinfoTest extends TestCase
         $provider->getResourceOwner($token);
     }
 
+    public function testSignedUserinfoMalformedJweHeaderIsAFormatError(): void
+    {
+        // The first segment would decode to a JWE header if non-base64url
+        // characters were silently ignored. It must be treated as malformed.
+        $jweHeader = TestHelper::base64UrlEncode(json_encode(
+            ['alg' => 'RSA-OAEP', 'enc' => 'A256GCM'],
+            JSON_UNESCAPED_SLASHES
+        )) . '!';
+
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new Response(200, ['Content-Type' => 'application/jwt'], $jweHeader . '.key.iv.ciphertext.tag'),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('Invalid UserInfo response format');
+        $provider->getResourceOwner($token);
+    }
+
     public function testSignedUserinfoGarbageWithFiveSegmentsIsAFormatErrorNotJwe(): void
     {
         // Not a JWE — the first segment does not decode to a header with "enc".

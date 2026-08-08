@@ -32,6 +32,7 @@ use Jose\Component\Checker\IssuerChecker;
 use Jose\Component\Checker\IssuedAtChecker;
 use Jose\Component\Checker\MissingMandatoryClaimException;
 use Jose\Component\Checker\NotBeforeChecker;
+use Jose\Component\Core\Util\Base64UrlSafe;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Hvatum\OpenIDConnect\Client\OptionProvider\OpenIDConnectOptionProvider;
@@ -1603,10 +1604,15 @@ class OpenIDConnectProvider extends AbstractProvider
             // Distinguish encrypted tokens from garbage: a JWE protected
             // header carries an "enc" member (RFC 7516 §4.1.2). Decryption
             // is not supported.
-            $protected = json_decode(
-                base64_decode(strtr(explode('.', $jwt)[0], '-_', '+/')) ?: '',
-                true
-            );
+            $protected = null;
+            $segments = explode('.', $jwt);
+            if (isset($segments[0])) {
+                try {
+                    $protected = json_decode(Base64UrlSafe::decodeNoPadding($segments[0]), true);
+                } catch (\Throwable $decodeError) {
+                    $protected = null;
+                }
+            }
             if (is_array($protected) && isset($protected['enc'])) {
                 throw new IdentityProviderException(
                     "Encrypted (JWE) {$label}s are not supported. "
