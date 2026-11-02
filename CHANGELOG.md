@@ -18,6 +18,10 @@ Releases before 0.4.0 predate this file; see the git history for those.
   `createAccessToken()` returns anything but `League\OAuth2\Client\Token\AccessToken`.
   That was already the documented return type, and League's
   `getResourceOwner()` requires it, but the mismatch used to pass silently.
+- `PARTrait` declares `hasClientAssertion()`, `createClientAssertion()` and
+  `getClientAssertionAudience()` as abstract, so a provider composing it must
+  also use `ClientAssertionTrait` and define the audience method. Previously
+  the trait probed for them at call time and fell back to the issuer URL.
 
 ### Changed
 
