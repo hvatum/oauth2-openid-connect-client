@@ -7,6 +7,7 @@ namespace Hvatum\OpenIDConnect\Client\Test\Provider;
 use GuzzleHttp\Psr7\Response;
 use GuzzleHttp\Psr7\Request;
 use PHPUnit\Framework\TestCase;
+use Hvatum\OpenIDConnect\Client\Test\InterfaceOnlyTokenTestProvider;
 use Hvatum\OpenIDConnect\Client\Test\TokenEndpointAudienceTestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 use Hvatum\OpenIDConnect\Client\Test\TestProvider;
@@ -1873,6 +1874,19 @@ final class OpenIDConnectProviderTest extends TestCase
         $this->expectException(IdentityProviderException::class);
         $this->expectExceptionMessage('Transport failed before receiving a response');
         $provider->getResourceOwner($token);
+    }
+
+    public function testGetAccessTokenRejectsTokenNotExtendingLeagueAccessToken(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+        ], $history, [], InterfaceOnlyTokenTestProvider::class);
+
+        $this->expectException(\UnexpectedValueException::class);
+        $this->expectExceptionMessage('createAccessToken() must return League\OAuth2\Client\Token\AccessToken');
+        $provider->getAccessToken('client_credentials');
     }
 
     public function testUserinfoConnectExceptionIsWrapped(): void

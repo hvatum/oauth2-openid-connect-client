@@ -10,17 +10,22 @@ Releases before 0.4.0 predate this file; see the git history for those.
 
 ## [Unreleased]
 
+### Breaking
+
+- Guzzle 6 is no longer accepted; the constraint is now
+  `guzzlehttp/guzzle ^7.4.5 || ^8.0`.
+- `getAccessToken()` throws `UnexpectedValueException` if an overridden
+  `createAccessToken()` returns anything but `League\OAuth2\Client\Token\AccessToken`.
+  That was already the documented return type, and League's
+  `getResourceOwner()` requires it, but the mismatch used to pass silently.
+
 ### Changed
 
-- Guzzle 8 is now allowed and Guzzle 6 is no longer accepted
-  (`guzzlehttp/guzzle ^7.4.5 || ^8.0`). Userinfo error handling no longer
-  relies on `RequestException::hasResponse()`, which Guzzle 8 removed.
+- Guzzle 8 is now allowed. Userinfo error handling no longer relies on
+  `RequestException::hasResponse()`, which Guzzle 8 removed.
 - Userinfo transport failures (connection, DNS, timeout) are now wrapped in
   `IdentityProviderException` like response errors, instead of escaping as
   raw Guzzle exceptions.
-- `getAccessToken()` throws `UnexpectedValueException` if an overridden
-  `createAccessToken()` returns anything but `League\OAuth2\Client\Token\AccessToken`,
-  which League's `getResourceOwner()` requires anyway.
 - Development: PHPUnit 10.5 through 13 (PHPUnit 9 dropped), PHPStan at
   level 5, and GitHub Actions CI across PHP 8.2 to 8.5.
 
