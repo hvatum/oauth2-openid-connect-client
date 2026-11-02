@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hvatum\OpenIDConnect\Client\Test\Tool;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 
@@ -519,9 +520,7 @@ final class ClientAssertionTraitTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider wrongTypedOptionProvider
-     */
+    #[DataProvider('wrongTypedOptionProvider')]
     public function testWrongTypedKeyOptionThrowsAtConstruction(mixed $value, string $optionName): void
     {
         // Silently coercing wrong-typed options to "absent" is dangerous: a

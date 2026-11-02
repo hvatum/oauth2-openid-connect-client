@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hvatum\OpenIDConnect\Client\Test\Tool;
 
 use GuzzleHttp\Psr7\Response;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 
@@ -700,9 +701,7 @@ final class DPopTraitTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider wrongTypedDpopOptionProvider
-     */
+    #[DataProvider('wrongTypedDpopOptionProvider')]
     public function testWrongTypedDpopOptionThrowsAtConstruction(mixed $value, string $optionName): void
     {
         // The constructor now validates the public DPoP options upfront (no
@@ -729,9 +728,7 @@ final class DPopTraitTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider orphanPublicKeyOptionProvider
-     */
+    #[DataProvider('orphanPublicKeyOptionProvider')]
     public function testOrphanedDpopPublicKeyThrowsAtConstruction(string $optionName): void
     {
         // Configuring a public DPoP key without a corresponding private key is

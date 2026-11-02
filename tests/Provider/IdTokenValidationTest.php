@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hvatum\OpenIDConnect\Client\Test\Provider;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Hvatum\OpenIDConnect\Client\Test\TestHelper;
 
@@ -604,9 +605,7 @@ final class IdTokenValidationTest extends TestCase
         self::assertSame('user-1', $result['sub']);
     }
 
-    /**
-     * @dataProvider malformedAllowedAuthorizedPartiesProvider
-     */
+    #[DataProvider('malformedAllowedAuthorizedPartiesProvider')]
     public function testMalformedAllowedAuthorizedPartiesOptionRejected($value): void
     {
         $history = [];
