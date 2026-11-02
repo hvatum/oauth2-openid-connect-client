@@ -34,7 +34,7 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: json, openssl, gmp
           coverage: none
-          ini-values: error_reporting=E_ALL, zend.assertions=1
+          ini-values: error_reporting=E_ALL
 
       - uses: ramsey/composer-install@v3
         with:
