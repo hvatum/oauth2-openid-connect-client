@@ -8,7 +8,7 @@ While the major version is 0, breaking changes are released in minor versions.
 
 Releases before 0.4.0 predate this file; see the git history for those.
 
-## [Unreleased]
+## [0.6.0] - 2026-11-02
 
 ### Breaking
 
