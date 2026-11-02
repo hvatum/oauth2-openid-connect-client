@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace Hvatum\OpenIDConnect\Client\Provider;
 
-use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\BadResponseException;
+use GuzzleHttp\Exception\TransferException;
 use GuzzleHttp\Psr7\Header;
 use League\OAuth2\Client\Provider\AbstractProvider;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
@@ -1026,14 +1027,13 @@ class OpenIDConnectProvider extends AbstractProvider
 
         try {
             $response = $this->getResponse($request);
-        } catch (RequestException $e) {
-            // Guzzle 7 exposes the response on RequestException itself; Guzzle 8
-            // only on its ResponseException subclass. Look it up on the instance
-            // so one code path serves both.
-            $response = method_exists($e, 'getResponse') ? $e->getResponse() : null;
-            if (!$response instanceof ResponseInterface) {
-                throw new IdentityProviderException($e->getMessage(), $e->getCode(), null);
-            }
+        } catch (BadResponseException $e) {
+            // 4xx/5xx: the body may still carry error/error_description.
+            $response = $e->getResponse();
+        } catch (TransferException $e) {
+            // Connection, DNS and timeout failures carry no response. They
+            // are TransferException but not RequestException since Guzzle 7.
+            throw new IdentityProviderException($e->getMessage(), $e->getCode(), null);
         }
 
         // Error statuses must surface as IdentityProviderException whatever

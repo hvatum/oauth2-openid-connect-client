@@ -1875,6 +1875,25 @@ final class OpenIDConnectProviderTest extends TestCase
         $provider->getResourceOwner($token);
     }
 
+    public function testUserinfoConnectExceptionIsWrapped(): void
+    {
+        $history = [];
+        $provider = TestHelper::basicProvider([
+            TestHelper::wellKnownResponse(),
+            TestHelper::tokenResponse(),
+            new \GuzzleHttp\Exception\ConnectException(
+                'Could not resolve host: idp.test',
+                new Request('GET', 'https://idp.test/oauth2/userinfo')
+            ),
+        ], $history);
+
+        $token = $provider->getAccessToken('client_credentials');
+
+        $this->expectException(IdentityProviderException::class);
+        $this->expectExceptionMessage('Could not resolve host: idp.test');
+        $provider->getResourceOwner($token);
+    }
+
     public function testUserinfoErrorStatusSurfacesErrorDescription(): void
     {
         $history = [];
