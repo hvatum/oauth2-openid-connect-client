@@ -94,18 +94,15 @@ trait PARTrait
      */
     protected function authenticatePARRequest(array $params): array
     {
-        if (method_exists($this, 'hasClientAssertion') && $this->hasClientAssertion()) {
+        if ($this->hasClientAssertion()) {
             // private_key_jwt authentication — RFC 9126 §2 says PAR uses the same client
             // authentication as the token endpoint. Uses getClientAssertionAudience() which
             // defaults to the issuer identifier per draft-ietf-oauth-rfc7523bis §5
             // (updating RFC 9126 §2) but can be overridden.
-            $audience = method_exists($this, 'getClientAssertionAudience')
-                ? $this->getClientAssertionAudience()
-                : $this->issuerUrl;
-            $assertion = $this->createClientAssertion($audience);
+            $assertion = $this->createClientAssertion($this->getClientAssertionAudience());
             $params['client_assertion_type'] = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
             $params['client_assertion'] = $assertion;
-        } elseif (isset($this->clientSecret) && $this->clientSecret !== null && $this->clientSecret !== '') {
+        } elseif (is_string($this->clientSecret) && $this->clientSecret !== '') {
             // client_secret_post authentication (RFC 9126 §2: same auth as token endpoint)
             $params['client_id'] = $this->clientId;
             $params['client_secret'] = $this->clientSecret;
@@ -121,11 +118,9 @@ trait PARTrait
     protected function getStreamFactory()
     {
         // Check if the request factory also implements StreamFactoryInterface
-        if (method_exists($this, 'getRequestFactory')) {
-            $requestFactory = $this->getRequestFactory();
-            if ($requestFactory instanceof \Psr\Http\Message\StreamFactoryInterface) {
-                return $requestFactory;
-            }
+        $requestFactory = $this->getRequestFactory();
+        if ($requestFactory instanceof \Psr\Http\Message\StreamFactoryInterface) {
+            return $requestFactory;
         }
 
         // Guzzle is a transitive dependency via league/oauth2-client

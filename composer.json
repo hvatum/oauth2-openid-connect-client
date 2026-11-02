@@ -32,6 +32,8 @@
     },
     "require-dev": {
         "mockery/mockery": "^1.5",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-mockery": "^2.0",
         "phpunit/phpunit": "^10.5 || ^11.0 || ^12.0 || ^13.0"
     },
     "autoload": {
@@ -47,6 +49,10 @@
     "suggest": {
         "ext-gmp": "Recommended for RSA key performance (PS256, RS256)",
         "ext-bcmath": "Alternative to GMP for RSA key performance"
+    },
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --no-progress --memory-limit=1G"
     },
     "config": {
         "sort-packages": true

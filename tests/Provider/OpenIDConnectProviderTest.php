@@ -1992,7 +1992,7 @@ final class OpenIDConnectProviderTest extends TestCase
         ], $history);
 
         $token = $provider->getAccessToken('client_credentials');
-        self::assertNotNull($token);
+        self::assertSame('token123', $token->getToken());
     }
 
     public function testAuthMethodRejectsUnsupportedPrivateKeyJwt(): void
@@ -2034,7 +2034,7 @@ final class OpenIDConnectProviderTest extends TestCase
         ], $history);
 
         $token = $provider->getAccessToken('client_credentials');
-        self::assertNotNull($token);
+        self::assertSame('token123', $token->getToken());
     }
 
     // ── code_challenge_methods_supported tests ──

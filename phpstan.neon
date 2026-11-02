@@ -1,0 +1,26 @@
+# Static analysis of the library and its tests. Run from the repo root:
+#   composer analyse        (vendor/bin/phpstan analyse)
+#
+# Level 6 wants value types on every array parameter and return, which means
+# documenting the option, claim and authorization_details shapes in the
+# public API first.
+includes:
+    - vendor/phpstan/phpstan-mockery/extension.neon
+
+parameters:
+    level: 5
+    # League's PHPDoc is not reliable at runtime: AbstractProvider::parseResponse()
+    # is documented as returning array but returns whatever json_decode() gives,
+    # and $clientSecret is documented as string but is null when not configured.
+    # The guards against that must not be reported as redundant.
+    treatPhpDocTypesAsCertain: false
+    paths:
+        - src
+        - tests
+    ignoreErrors:
+        # Guzzle's Middleware::history() takes its container as
+        # array|ArrayAccess by reference, so PHPStan cannot see that the
+        # array the tests pass in stays an array.
+        -
+            identifier: parameterByRef.type
+            path: tests/TestHelper.php

@@ -485,7 +485,7 @@ class OpenIDConnectProvider extends AbstractProvider
 
         if (function_exists('posix_geteuid')) {
             $uid = posix_geteuid();
-            if (is_int($uid) && $uid >= 0) {
+            if ($uid >= 0) {
                 $identifier = 'uid:' . $uid;
             }
         }
@@ -626,7 +626,18 @@ class OpenIDConnectProvider extends AbstractProvider
             unset($options['iss']);
         }
 
-        return parent::getAccessToken($grant, $options);
+        $token = parent::getAccessToken($grant, $options);
+        if (!$token instanceof AccessToken) {
+            // League types getResourceOwner() on the concrete AccessToken, so a
+            // custom createAccessToken() override must stay within that class.
+            throw new \UnexpectedValueException(sprintf(
+                'createAccessToken() must return %s, got %s',
+                AccessToken::class,
+                get_debug_type($token)
+            ));
+        }
+
+        return $token;
     }
 
     /**
@@ -1681,14 +1692,11 @@ class OpenIDConnectProvider extends AbstractProvider
             // Distinguish encrypted tokens from garbage: a JWE protected
             // header carries an "enc" member (RFC 7516 §4.1.2). Decryption
             // is not supported.
-            $protected = null;
             $segments = explode('.', $jwt);
-            if (isset($segments[0])) {
-                try {
-                    $protected = json_decode(Base64UrlSafe::decodeNoPadding($segments[0]), true);
-                } catch (\Throwable $decodeError) {
-                    $protected = null;
-                }
+            try {
+                $protected = json_decode(Base64UrlSafe::decodeNoPadding($segments[0]), true);
+            } catch (\Throwable $decodeError) {
+                $protected = null;
             }
             if (is_array($protected) && isset($protected['enc'])) {
                 throw new IdentityProviderException(

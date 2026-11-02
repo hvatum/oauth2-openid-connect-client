@@ -13,9 +13,8 @@ final class NonceCheckerTest extends TestCase
     public function testAcceptsMatchingNonce(): void
     {
         $checker = new NonceChecker('expected-nonce');
-        // Should not throw
+        $this->expectNotToPerformAssertions();
         $checker->checkClaim('expected-nonce');
-        self::assertTrue(true); // Assert we got here
     }
 
     public function testRejectsMismatchingNonce(): void
@@ -29,9 +28,8 @@ final class NonceCheckerTest extends TestCase
     public function testSkipsValidationWhenNoNonceExpected(): void
     {
         $checker = new NonceChecker(null);
-        // Should not throw
+        $this->expectNotToPerformAssertions();
         $checker->checkClaim('any-value');
-        self::assertTrue(true);
     }
 
     public function testSupportedClaimIsNonce(): void

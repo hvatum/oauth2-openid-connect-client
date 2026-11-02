@@ -131,7 +131,7 @@ trait WellKnownConfigTrait
         ];
 
         foreach ($endpointFields as $field) {
-            if (isset($config[$field]) && $config[$field] !== null) {
+            if (isset($config[$field])) {
                 $this->assertHttpsUrl($field, $config[$field]);
             }
         }
