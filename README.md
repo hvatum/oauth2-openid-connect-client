@@ -347,8 +347,8 @@ composer test       # PHPUnit
 composer analyse    # PHPStan
 ```
 
-CI runs the test suite on PHP 8.2 to 8.5 with both the lowest and highest
-resolvable dependency versions, plus PHPStan and `composer audit`.
+CI runs the test suite on PHP 8.2 to 8.5 with the highest resolvable
+dependency versions, plus the lowest on PHP 8.2, PHPStan and `composer audit`.
 
 ## License
 
