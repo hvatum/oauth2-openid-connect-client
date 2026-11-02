@@ -1016,11 +1016,11 @@ class OpenIDConnectProvider extends AbstractProvider
         try {
             $response = $this->getResponse($request);
         } catch (RequestException $e) {
-            if (!$e->hasResponse()) {
-                throw new IdentityProviderException($e->getMessage(), $e->getCode(), null);
-            }
-            $response = $e->getResponse();
-            if ($response === null) {
+            // Guzzle 7 exposes the response on RequestException itself; Guzzle 8
+            // only on its ResponseException subclass. Look it up on the instance
+            // so one code path serves both.
+            $response = method_exists($e, 'getResponse') ? $e->getResponse() : null;
+            if (!$response instanceof ResponseInterface) {
                 throw new IdentityProviderException($e->getMessage(), $e->getCode(), null);
             }
         }

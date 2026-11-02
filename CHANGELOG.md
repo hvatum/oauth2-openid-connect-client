@@ -8,6 +8,14 @@ While the major version is 0, breaking changes are released in minor versions.
 
 Releases before 0.4.0 predate this file; see the git history for those.
 
+## [Unreleased]
+
+### Changed
+
+- Guzzle 8 is now allowed and Guzzle 6 is no longer accepted
+  (`guzzlehttp/guzzle ^7.4.5 || ^8.0`). Userinfo error handling no longer
+  relies on `RequestException::hasResponse()`, which Guzzle 8 removed.
+
 ## [0.5.0] - 2026-08-08
 
 ### Added

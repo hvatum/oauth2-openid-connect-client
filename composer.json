@@ -24,7 +24,7 @@
         "php": "^8.2",
         "ext-json": "*",
         "ext-openssl": "*",
-        "guzzlehttp/guzzle": "^6.5.8 || ^7.4.5",
+        "guzzlehttp/guzzle": "^7.4.5 || ^8.0",
         "league/oauth2-client": "^2.7",
         "psr/log": "^3.0",
         "psr/simple-cache": "^3.0",
