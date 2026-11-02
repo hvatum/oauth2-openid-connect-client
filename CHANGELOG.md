@@ -18,6 +18,8 @@ Releases before 0.4.0 predate this file; see the git history for those.
 - `getAccessToken()` throws `UnexpectedValueException` if an overridden
   `createAccessToken()` returns anything but `League\OAuth2\Client\Token\AccessToken`,
   which League's `getResourceOwner()` requires anyway.
+- Development: PHPUnit 10.5 through 13 (PHPUnit 9 dropped), PHPStan at
+  level 5, and GitHub Actions CI across PHP 8.2 to 8.5.
 
 ## [0.5.0] - 2026-08-08
 

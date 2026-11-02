@@ -1,5 +1,7 @@
 # OpenID Connect Client for The PHP League OAuth2 Client
 
+[![CI](https://github.com/hvatum/oauth2-openid-connect-client/actions/workflows/ci.yml/badge.svg)](https://github.com/hvatum/oauth2-openid-connect-client/actions/workflows/ci.yml)
+
 A generic OpenID Connect provider for [The PHP League's OAuth2 Client](https://github.com/thephpleague/oauth2-client), with built-in support for modern OAuth 2.0 security features:
 
 - **OpenID Connect Discovery** — Automatic endpoint configuration via `.well-known/openid-configuration`
@@ -336,6 +338,17 @@ class MyProvider extends OpenIDConnectProvider
 | [RFC 9207](https://datatracker.ietf.org/doc/html/rfc9207) | Authorization Server Issuer Identification | Supported |
 | [RFC 9396](https://datatracker.ietf.org/doc/html/rfc9396) | Rich Authorization Requests | Supported |
 | [RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449) | DPoP (Demonstrating Proof of Possession) | Supported |
+
+## Development
+
+```bash
+composer install
+composer test       # PHPUnit
+composer analyse    # PHPStan
+```
+
+CI runs the test suite on PHP 8.2 to 8.5 with both the lowest and highest
+resolvable dependency versions, plus PHPStan and `composer audit`.
 
 ## License
 

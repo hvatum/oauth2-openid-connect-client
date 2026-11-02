@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+
+  # No lock file is committed, so these PRs only appear when a new release
+  # falls outside the constraints in composer.json. Widen keeps the lower
+  # bounds consumers rely on instead of bumping them.
+  - package-ecosystem: composer
+    directory: /
+    schedule:
+      interval: monthly
+    versioning-strategy: widen

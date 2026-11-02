@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Weekly run so new security advisories surface even without a push.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: PHPUnit (PHP ${{ matrix.php }}, ${{ matrix.dependencies }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4', '8.5']
+        dependencies: [highest]
+        include:
+          # Lowest resolvable versions prove the lower bounds in composer.json
+          # are honest; one PHP version is enough for that.
+          - php: '8.2'
+            dependencies: lowest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: json, openssl, gmp
+          coverage: none
+          ini-values: error_reporting=E_ALL, zend.assertions=1
+
+      - uses: ramsey/composer-install@v3
+        with:
+          dependency-versions: ${{ matrix.dependencies }}
+
+      - run: composer validate --strict
+
+      - run: vendor/bin/phpunit --no-coverage
+
+  static-analysis:
+    name: PHPStan and composer audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: json, openssl, gmp
+          coverage: none
+
+      - uses: ramsey/composer-install@v3
+
+      - run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
+      # The lock file is not committed (library), so this audits the
+      # dependency set that was just resolved, i.e. what a consumer gets today.
+      - run: composer audit
