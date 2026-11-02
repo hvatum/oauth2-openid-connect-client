@@ -14,6 +14,15 @@ use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
  */
 trait PARTrait
 {
+    // RFC 9126 §2: PAR uses the same client authentication as the token
+    // endpoint. ClientAssertionTrait supplies the first two; the provider
+    // decides the audience.
+    abstract protected function hasClientAssertion(): bool;
+
+    abstract protected function createClientAssertion(string $audience, ?int $expiresIn = null): string;
+
+    abstract protected function getClientAssertionAudience(): string;
+
     /**
      * Push authorization request to PAR endpoint
      *
